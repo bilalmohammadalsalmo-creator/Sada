@@ -68,6 +68,7 @@ import app.sadasync.sync.CaptureProjectionActivity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+import androidx.compose.ui.input.key.nativeKeyEvent
 
 private val TABS = listOf("الرئيسية", "المكتبة", "الإعدادات", "الدعم")
 
