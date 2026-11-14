@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">صدى</string>
+    <string name="a11y_desc">يعرض لوحة تحكم فوق القناة عند الضغط مرتين على زر الريموت المحدد، ويلتقط ضغطات الريموت للتحكم بالصوت المرافق وضبط توقيته. لا يقرأ محتوى الشاشة.</string>
+    <string name="notif_playback_title">صدى يعمل</string>
+    <string name="notif_playback_text">الصوت المرافق قيد التشغيل</string>
+    <string name="notif_capture_title">المزامنة التلقائية جاهزة</string>
+    <string name="notif_capture_text">يلتقط صوت القناة لمطابقة التوقيت عند الطلب فقط</string>
+</resources>
