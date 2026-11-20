@@ -10,7 +10,6 @@ import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import app.sadasync.App
-import app.sadasync.sync.CaptureHolder
 import app.sadasync.util.AppLog
 
 /**
@@ -18,7 +17,7 @@ import app.sadasync.util.AppLog
  *  - يلتقط ضغطات الريموت (flagRequestFilterKeyEvents) حتى والتطبيق في الخلفية.
  *  - ضغطتان سريعتان على زر التفعيل (الأحمر افتراضيًا) تفتحان اللوحة.
  *  - أثناء ظهور اللوحة تُستهلك أزرار الاتجاهات/OK/Back وتقود اللوحة؛ بقية الأزرار (الصوت…) تمر للنظام.
- *  - تغيير القناة (CH+/CH- أو الأرقام) يجدول إعادة مزامنة تلقائية بعد 8 ثوانٍ.
+ *  - تغيير القناة (CH+/CH- أو الأرقام) يُبلغ محرك المزامنة ليعيد القياس تلقائيًا.
  * لا يقرأ محتوى الشاشة (canRetrieveWindowContent=false).
  */
 class PanelAccessibilityService : AccessibilityService() {
@@ -38,16 +37,15 @@ class PanelAccessibilityService : AccessibilityService() {
                 return
             }
             p.refresh()
-            handler.postDelayed(this, 500)
+            handler.postDelayed(this, 250)
         }
     }
 
+    /** بعد تغيير القناة بثوانٍ: الريسيفر صفّر تأخير الصورة والمحتوى تغيّر، فنعيد القياس من جديد. */
     private val resync = Runnable {
         val app = App.instance
-        if (app.prefs.autoResyncOnChannelChange && app.player.ui.value.playing &&
-            CaptureHolder.projection != null
-        ) {
-            app.autoSync.start()
+        if (app.prefs.autoResyncOnChannelChange && app.player.ui.value.playing) {
+            if (app.autoSync.running) app.autoSync.onChannelChange() else if (app.prefs.autoSyncEnabled) app.autoSync.start()
         }
     }
 
@@ -141,8 +139,8 @@ class PanelAccessibilityService : AccessibilityService() {
         if (panel != null) return
         val v = PanelView(this)
         val lp = WindowManager.LayoutParams(
-            (460 * resources.displayMetrics.density).toInt(),
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            (PanelView.WIDTH_DP * resources.displayMetrics.density).toInt(),
+            (PanelView.HEIGHT_DP * resources.displayMetrics.density).toInt(),
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -161,7 +159,7 @@ class PanelAccessibilityService : AccessibilityService() {
         }
         panel = v
         lastInteraction = SystemClock.uptimeMillis()
-        handler.postDelayed(ticker, 500)
+        handler.postDelayed(ticker, 250)
     }
 
     private fun hidePanel() {
@@ -179,6 +177,6 @@ class PanelAccessibilityService : AccessibilityService() {
     companion object {
         private const val DOUBLE_PRESS_MS = 700L
         private const val IDLE_HIDE_MS = 20_000L
-        private const val RESYNC_DELAY_MS = 8_000L
+        private const val RESYNC_DELAY_MS = 2_500L
     }
 }

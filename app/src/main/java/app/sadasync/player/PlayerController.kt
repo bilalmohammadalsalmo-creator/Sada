@@ -57,6 +57,10 @@ class PlayerController(
         const val MAX_DELAY_MS = DelayAudioProcessor.MAX_DELAY_MS
     }
 
+    /** يُستدعى عند أي اضطراب في صوتنا (بدء تشغيل، تحميل، استئناف) ليعيد المزامنة قياسه. */
+    @Volatile
+    var onDisturbed: (() -> Unit)? = null
+
     val delayProcessor = DelayAudioProcessor()
     val refEnvelope = EnvelopeStore()
 
@@ -106,8 +110,14 @@ class PlayerController(
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 when (state) {
-                    Player.STATE_BUFFERING -> _ui.update { it.copy(status = "جارٍ التحميل…") }
-                    Player.STATE_READY -> _ui.update { it.copy(status = "يعمل") }
+                    Player.STATE_BUFFERING -> {
+                        _ui.update { it.copy(status = "جارٍ التحميل…") }
+                        onDisturbed?.invoke()
+                    }
+                    Player.STATE_READY -> {
+                        _ui.update { it.copy(status = "يعمل") }
+                        onDisturbed?.invoke()
+                    }
                     Player.STATE_ENDED -> {
                         _ui.update { it.copy(playing = false, status = "انتهى") }
                         stopService()
@@ -137,6 +147,7 @@ class PlayerController(
         p.playWhenReady = true
         prefs.lastSourceId = src.id
         _ui.update { it.copy(playing = true, source = src, status = "جارٍ التحميل…") }
+        onDisturbed?.invoke()
         startService()
     }
 

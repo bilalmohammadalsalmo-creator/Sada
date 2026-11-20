@@ -22,7 +22,7 @@ class App : Application() {
         prefs = Prefs(this)
         sources = SourceRepository(this, prefs)
         player = PlayerController(this, prefs, sources)
-        autoSync = AutoSyncEngine(this, player)
+        autoSync = AutoSyncEngine(this, player, prefs)
     }
 
     companion object {

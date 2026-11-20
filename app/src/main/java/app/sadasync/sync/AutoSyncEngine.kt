@@ -8,10 +8,13 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.os.Build
 import android.os.Process
 import androidx.core.content.ContextCompat
+import app.sadasync.control.ReceiverControl
+import app.sadasync.data.Prefs
 import app.sadasync.player.PlayerController
 import app.sadasync.util.AppLog
 import kotlinx.coroutines.CancellationException
@@ -19,38 +22,75 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.util.Locale
 import kotlin.math.sqrt
 
-/**
- * المزامنة التلقائية: يلتقط صوت القناة (AudioPlaybackCapture بعد إذن المستخدم) لمدة 14 ثانية،
- * ويقارن غلاف شدته بغلاف صوتنا المسجّل في DelayAudioProcessor، ثم يضبط التأخير حسب أفضل ازاحة.
- *
- * حدود معروفة: يعمل فقط حين يسمح تطبيق القنوات بالتقاط صوته، وعلى أجهزة تدعم MediaProjection،
- * ويحتاج صوتًا مشتركًا بين المصدرين (جمهور/صافرات/ضجيج ملعب) ليجد التطابق.
- */
-class AutoSyncEngine(private val ctx: Context, private val pc: PlayerController) {
-    companion object {
-        const val CAPTURE_SECONDS = 14
-        const val LAG_BACK_SECONDS = 25
-        const val MIN_OVERLAP_SECONDS = 5
-        const val RATE = 16_000
+data class EngineUi(
+    val enabled: Boolean = false,
+    /** حالة التقاط صوت القناة (نص للعرض). */
+    val capture: String = "متوقف",
+    val capturing: Boolean = false,
+    /** حالة التحكم بالريسيفر (نص للعرض). */
+    val control: String = "لم يُفحص بعد",
+    val brain: SyncBrain.Info = SyncBrain.Info(text = "متوقف"),
+    val lastAction: String = "",
+    val actionsCount: Int = 0,
+)
 
-        /** تعويض ثابت (ms) لتأخر خرج المشغّل عن توقيت المعالج؛ عدّله بعد المعايرة على جهازك. */
-        const val OUTPUT_LATENCY_COMP_MS = 0
+/**
+ * المزامنة التلقائية المستمرة:
+ *  - تلتقط صوت القناة باستمرار (AudioPlaybackCapture بعد إذن المستخدم، أو الميكروفون عند الاختيار).
+ *  - [SyncBrain] يقارنه بصوتك الخارجي كل بضع ثوانٍ ويقرر: تأخير الصورة (إيقاف مؤقت للريسيفر) أو تأخير صوتك.
+ *  - عند الانقطاع أو تغيير القناة يعيد القياس والمطابقة بنفسه بدون أي تدخل.
+ */
+class AutoSyncEngine(
+    private val ctx: Context,
+    private val pc: PlayerController,
+    private val prefs: Prefs,
+) {
+    companion object {
+        const val RATE = 16_000
+        private const val TICK_MS = 500L
+        private const val STEP_EVERY_TICKS = 2
     }
+
+    val chanEnv = EnvelopeStore(180)
+    private val brain = SyncBrain(SyncBrain.Config(calibMs = prefs.calibMs))
+    val control = ReceiverControl(ctx, prefs)
+
+    private val _ui = MutableStateFlow(EngineUi(enabled = prefs.autoSyncEnabled))
+    val ui: StateFlow<EngineUi> = _ui
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Volatile
     private var job: Job? = null
 
+    @Volatile
+    private var captureJob: Job? = null
+
+    private var actionsCount = 0
+    private var lastAction = ""
+
     val running: Boolean get() = job?.isActive == true
 
+    init {
+        // تبدأ المزامنة مع أول تشغيل لصوتك (إن كانت مفعّلة)، وكل اضطراب لاحق يعيد القياس
+        pc.onDisturbed = {
+            if (!running && prefs.autoSyncEnabled && pc.ui.value.playing) start() else onAudioDisturbed()
+        }
+    }
+
+    // ------------------------------------------------------------ تحكم
+
+    /** يشغّل المزامنة المستمرة (ويحفظ التفضيل). آمن للاستدعاء المتكرر. */
     fun start() {
+        prefs.autoSyncEnabled = true
+        _ui.value = _ui.value.copy(enabled = true)
         if (running) return
         job = scope.launch {
             try {
@@ -58,119 +98,250 @@ class AutoSyncEngine(private val ctx: Context, private val pc: PlayerController)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                AppLog.d("autosync failed: $e")
-                report("تعذّرت المزامنة: ${e.message}")
+                AppLog.d("autosync crashed: $e")
+                publish(captureText = "خطأ: ${e.message}")
             }
         }
     }
 
+    /** يوقف المزامنة (ويحفظ التفضيل). */
+    fun stop() {
+        prefs.autoSyncEnabled = false
+        cancel()
+        _ui.value = _ui.value.copy(enabled = false, capture = "متوقف", capturing = false,
+            brain = SyncBrain.Info(text = "المزامنة التلقائية متوقفة"))
+    }
+
+    /** يوقف المهمة الجارية فقط دون تغيير التفضيل. */
     fun cancel() {
         job?.cancel()
+        captureJob?.cancel()
     }
 
-    private fun report(s: String) = pc.setSyncStatus(s)
+    /** يبدأ القياس من الصفر (زر "مزامنة الآن"). */
+    fun resync() {
+        synchronized(brain) { brain.reset(System.nanoTime()) }
+        start()
+    }
+
+    /** يُستدعى عند تغيير القناة على الريسيفر: التأخير السابق انتهى ومحتوى القناة تغيّر. */
+    fun onChannelChange() {
+        if (!running) return
+        synchronized(brain) { brain.onChannelRestart(System.nanoTime() + 1_500_000_000L) }
+    }
+
+    private fun onAudioDisturbed() {
+        if (!running) return
+        synchronized(brain) { brain.onExternalRestart(System.nanoTime()) }
+    }
+
+    // ------------------------------------------------------------ الحلقة الرئيسية
 
     private suspend fun run() {
-        if (!pc.ui.value.playing) return report("شغّل الصوت أولًا")
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return report("المزامنة التلقائية تتطلب أندرويد 10+")
-
-        val projection = CaptureHolder.projection
-        if (projection == null) {
-            report("امنح إذن المزامنة التلقائية من الصفحة الرئيسية للتطبيق")
-            try {
-                ctx.startActivity(
-                    Intent(ctx, CaptureProjectionActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                )
-            } catch (e: Exception) {
-                AppLog.d("cannot launch permission activity: $e")
-            }
-            return
-        }
+        publish(captureText = "يبدأ…")
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            return report("يلزم إذن تسجيل الصوت")
+            requestPermissionScreen()
+            publish(captureText = "يلزم إذن تسجيل الصوت")
         }
-        val rec = buildRecord(projection) ?: return report("تعذّر فتح التقاط صوت القناة على هذا الجهاز")
+        synchronized(brain) {
+            brain.cfg = SyncBrain.Config(calibMs = prefs.calibMs)
+            brain.reset(System.nanoTime())
+        }
+        captureJob = scope.launch { captureLoop() }
 
-        val channelEnv = EnvelopeStore(60)
-        var t0 = 0L
-        try {
-            rec.startRecording()
-            t0 = System.nanoTime()
-            withContext(Dispatchers.IO) { readLoop(rec, channelEnv, t0) { isActive } }
-        } finally {
-            try {
-                rec.stop()
-            } catch (e: Exception) {
-                AppLog.d("rec.stop: $e")
+        var tick = 0
+        while (scope.isActive && _ui.value.enabled) {
+            delay(TICK_MS)
+            tick++
+            if (tick % STEP_EVERY_TICKS == 0) {
+                val actions = synchronized(brain) { brain.step(System.nanoTime(), chanEnv, pc.refEnvelope) }
+                for (a in actions) execute(a)
             }
-            rec.release()
+            publish()
         }
-
-        val n = CAPTURE_SECONDS * EnvelopeStore.BUCKETS_PER_SEC
-        val lBack = LAG_BACK_SECONDS * EnvelopeStore.BUCKETS_PER_SEC
-        val minOverlap = MIN_OVERLAP_SECONDS * EnvelopeStore.BUCKETS_PER_SEC
-        val lFwd = n - minOverlap
-
-        val chRaw = channelEnv.slice(t0, n)
-        val refRaw = pc.refEnvelope.slice(t0 - lBack * EnvelopeStore.BUCKET_NS, lBack + n)
-        if (chRaw.max() < 5f) return report("لم يُلتقط صوت من القناة (ربما يمنع تطبيق القنوات التقاطه)")
-        if (refRaw.max() < 5f) return report("صوتك لا يصدر الآن؛ تأكد أنه يعمل")
-
-        val res = SyncMath.bestLag(SyncMath.features(chRaw), SyncMath.features(refRaw), lBack, lFwd, minOverlap)
-        AppLog.d("sync lag=${res.lagBuckets} score=${res.score} second=${res.second}")
-
-        val confident = res.score >= 0.25f && res.score - res.second >= 0.07f
-        if (!confident) {
-            return report("لم تتأكد المطابقة (${(res.score * 100).toInt()}%). جرّب وقت يوجد فيه هتاف أو تعليق")
-        }
-        val deltaMs = -res.lagBuckets * 20 - OUTPUT_LATENCY_COMP_MS
-        if (deltaMs == 0) return report("التوقيت مضبوط")
-        pc.setDelay(pc.ui.value.delayMs + deltaMs)
-        report(String.format(Locale.US, "تمت المزامنة: %+.2f ث", deltaMs / 1000.0))
     }
 
-    private fun readLoop(rec: AudioRecord, store: EnvelopeStore, t0: Long, alive: () -> Boolean) {
+    private fun publish(captureText: String? = null, capturing: Boolean? = null) {
+        val info = synchronized(brain) { brain.info }
+        val cur = _ui.value
+        _ui.value = cur.copy(
+            brain = info,
+            capture = captureText ?: cur.capture,
+            capturing = capturing ?: cur.capturing,
+            control = control.status.detail,
+            lastAction = lastAction,
+            actionsCount = actionsCount,
+        )
+    }
+
+    private fun note(text: String) {
+        lastAction = text
+        actionsCount++
+        AppLog.d("action: $text")
+    }
+
+    // ------------------------------------------------------------ التنفيذ
+
+    private suspend fun execute(a: SyncBrain.Action) {
+        when (a) {
+            is SyncBrain.Action.DelayAudio -> applyAudioDelta(a.ms, "تأخير صوتك ${a.ms} م.ث")
+            is SyncBrain.Action.DelayVideo -> {
+                val have = pc.ui.value.delayMs
+                if (have >= a.rawOffsetMs) {
+                    // صوتك مؤخَّر أصلًا: يكفي تقليل تأخيره بدل إيقاف الصورة
+                    applyAudioDelta(-a.rawOffsetMs, "تقليل تأخير صوتك ${a.rawOffsetMs} م.ث")
+                } else {
+                    delayVideo(a)
+                }
+            }
+        }
+    }
+
+    private fun applyAudioDelta(deltaMs: Int, text: String) {
+        val target = pc.ui.value.delayMs + deltaMs
+        if (target > PlayerController.MAX_DELAY_MS || target < 0) {
+            synchronized(brain) { brain.onApplyFailed(System.nanoTime(), "تأخير الصوت المطلوب خارج الحد المسموح") }
+            return
+        }
+        pc.setDelay(target)
+        synchronized(brain) { brain.onAudioShifted(System.nanoTime()) }
+        note(text)
+    }
+
+    private suspend fun delayVideo(a: SyncBrain.Action.DelayVideo) {
+        publish()
+        val r = control.pauseFor(a.ms.toLong())
+        if (!r.ok) {
+            synchronized(brain) { brain.onApplyFailed(System.nanoTime(), "تعذّر التحكم بالريسيفر: ${r.error}") }
+            return
+        }
+        // تحقق: صوت القناة يجب أن يسكت أثناء الإيقاف، وإلا فالأمر لم يصل للمشغّل
+        val from = r.startNs + 800_000_000L
+        val count = ((r.resumeNs - r.startNs - 1_100_000_000L) / EnvelopeStore.BUCKET_NS).toInt()
+        if (count >= 10) {
+            val seg = chanEnv.slice(from, count)
+            val quiet = seg.count { it < 8f }.toFloat() / seg.size
+            if (quiet < 0.8f) {
+                synchronized(brain) {
+                    brain.onApplyFailed(
+                        System.nanoTime(),
+                        "أمر الإيقاف لم يوقف القناة؛ غيّر زر الإيقاف أو طريقة التحكم من الإعدادات",
+                    )
+                }
+                return
+            }
+        }
+        synchronized(brain) { brain.onVideoShifted(r.resumeNs + 500_000_000L) }
+        note("تأخير الصورة ${a.ms} م.ث")
+    }
+
+    // ------------------------------------------------------------ التقاط صوت القناة
+
+    private fun requestPermissionScreen() {
+        try {
+            ctx.startActivity(
+                Intent(ctx, CaptureProjectionActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: Exception) {
+            AppLog.d("cannot launch permission activity: $e")
+        }
+    }
+
+    private suspend fun captureLoop() {
+        var askedOnce = false
+        while (scope.isActive && _ui.value.enabled) {
+            val mic = prefs.captureFromMic
+            val granted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+            val projection = CaptureHolder.projection
+            if (!granted || (!mic && projection == null)) {
+                publish(captureText = if (!granted) "يلزم إذن تسجيل الصوت" else "يلزم إذن التقاط صوت القناة", capturing = false)
+                if (!askedOnce && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    askedOnce = true
+                    requestPermissionScreen()
+                }
+                delay(2_000)
+                continue
+            }
+            if (mic) startMicService()
+            val rec = buildRecord(projection, mic)
+            if (rec == null) {
+                publish(captureText = "تعذّر فتح التقاط الصوت على هذا الجهاز", capturing = false)
+                delay(5_000)
+                continue
+            }
+            try {
+                rec.startRecording()
+                publish(captureText = if (mic) "يلتقط من الميكروفون" else "يلتقط صوت القناة", capturing = true)
+                readLoop(rec)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLog.d("capture error: $e")
+                publish(captureText = "انقطع الالتقاط، يعيد المحاولة…", capturing = false)
+            } finally {
+                try {
+                    rec.stop()
+                } catch (_: Exception) {
+                }
+                rec.release()
+            }
+            synchronized(brain) { brain.onChannelRestart(System.nanoTime()) }
+            delay(1_000)
+        }
+    }
+
+    private fun startMicService() {
+        try {
+            ContextCompat.startForegroundService(
+                ctx, Intent(ctx, CaptureService::class.java).putExtra(CaptureService.EXTRA_MIC_ONLY, true)
+            )
+        } catch (e: Exception) {
+            AppLog.d("mic service failed: $e")
+        }
+    }
+
+    private suspend fun readLoop(rec: AudioRecord) {
         val chunk = RATE / EnvelopeStore.BUCKETS_PER_SEC
         val buf = ShortArray(chunk)
-        val end = t0 + CAPTURE_SECONDS * 1_000_000_000L
-        var lastSec = -1
-        while (alive() && System.nanoTime() < end) {
+        var last = System.nanoTime()
+        while (scope.isActive && _ui.value.enabled) {
             var got = 0
             while (got < chunk) {
                 val r = rec.read(buf, got, chunk - got)
                 if (r < 0) throw IllegalStateException("خطأ قراءة الصوت ($r)")
-                if (r == 0) Thread.sleep(5)
+                if (r == 0) delay(5)
                 got += r
             }
             var sq = 0.0
             for (s in buf) sq += s.toDouble() * s
             val now = System.nanoTime()
-            store.put(now - EnvelopeStore.BUCKET_NS, sqrt(sq / chunk).toFloat())
-            val sec = ((now - t0) / 1_000_000_000L).toInt()
-            if (sec != lastSec) {
-                lastSec = sec
-                report("يستمع لصوت القناة… $sec/$CAPTURE_SECONDS")
-            }
+            // فجوة طويلة بين قراءتين = انقطع الالتقاط فعليًا
+            if (now - last > 600_000_000L) synchronized(brain) { brain.onChannelRestart(now) }
+            last = now
+            chanEnv.put(now - EnvelopeStore.BUCKET_NS, sqrt(sq / chunk).toFloat())
         }
     }
 
-    private fun buildRecord(mp: MediaProjection): AudioRecord? = try {
-        val cfg = AudioPlaybackCaptureConfiguration.Builder(mp)
-            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-            .addMatchingUsage(AudioAttributes.USAGE_GAME)
-            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
-            .excludeUid(Process.myUid()) // لا نلتقط صوتنا نحن
-            .build()
+    private fun buildRecord(mp: MediaProjection?, mic: Boolean): AudioRecord? = try {
         val fmt = AudioFormat.Builder()
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .setSampleRate(RATE)
             .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
             .build()
-        val rec = AudioRecord.Builder()
-            .setAudioFormat(fmt)
-            .setBufferSizeInBytes(RATE * 2)
-            .setAudioPlaybackCaptureConfig(cfg)
-            .build()
+        val b = AudioRecord.Builder().setAudioFormat(fmt).setBufferSizeInBytes(RATE * 2)
+        if (mic || mp == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            b.setAudioSource(MediaRecorder.AudioSource.MIC)
+        } else {
+            val cfg = AudioPlaybackCaptureConfiguration.Builder(mp)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                .excludeUid(Process.myUid()) // لا نلتقط صوتنا نحن
+                .build()
+            b.setAudioPlaybackCaptureConfig(cfg)
+        }
+        val rec = b.build()
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
             rec.release()
             null

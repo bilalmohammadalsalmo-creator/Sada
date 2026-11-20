@@ -37,7 +37,12 @@ class CaptureService : Service() {
         const val EXTRA_CODE = "code"
         const val EXTRA_DATA = "data"
         const val ACTION_STOP = "stop"
+
+        /** يشغّل الخدمة للميكروفون فقط (بلا MediaProjection) ليستمر الالتقاط والتطبيق بالخلفية (أندرويد 14). */
+        const val EXTRA_MIC_ONLY = "mic_only"
     }
+
+    private var micOnly = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -49,8 +54,21 @@ class CaptureService : Service() {
         val n = Notifications.build(
             this, getString(R.string.notif_capture_title), getString(R.string.notif_capture_text)
         )
+        if (intent?.getBooleanExtra(EXTRA_MIC_ONLY, false) == true) {
+            micOnly = true
+            try {
+                ServiceCompat.startForeground(this, 2, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            } catch (e: Exception) {
+                AppLog.d("mic foreground failed: $e")
+                stopSelf()
+            }
+            return START_NOT_STICKY
+        }
         // يجب بدء الخدمة الأمامية قبل الحصول على MediaProjection (أندرويد 14+)
-        ServiceCompat.startForeground(this, 2, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        ServiceCompat.startForeground(
+            this, 2, n,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+        )
 
         val code = intent?.getIntExtra(EXTRA_CODE, Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
         val data = intent?.let { IntentCompat.getParcelableExtra(it, EXTRA_DATA, Intent::class.java) }
@@ -78,8 +96,10 @@ class CaptureService : Service() {
     }
 
     override fun onDestroy() {
-        CaptureHolder.projection?.stop()
-        CaptureHolder.projection = null
+        if (!micOnly) {
+            CaptureHolder.projection?.stop()
+            CaptureHolder.projection = null
+        }
         super.onDestroy()
     }
 }

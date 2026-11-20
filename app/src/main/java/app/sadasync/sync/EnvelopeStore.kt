@@ -5,7 +5,7 @@ package app.sadasync.sync
  * تُستخدم لمطابقة صوتنا مع صوت القناة عبر الارتباط المتقاطع.
  * المفتاح هو System.nanoTime() بحيث يمكن مقارنة المصدرين على نفس الساعة.
  */
-class EnvelopeStore(seconds: Int = 120) {
+class EnvelopeStore(seconds: Int = 150) {
     companion object {
         const val BUCKET_NS = 20_000_000L
         const val BUCKETS_PER_SEC = 50
@@ -37,5 +37,12 @@ class EnvelopeStore(seconds: Int = 120) {
                 if (ids[s] == b) values[s] else 0f
             }
         }
+    }
+
+    /** يمسح كل المحتوى (مثلًا عند إعادة تشغيل الالتقاط). */
+    @Synchronized
+    fun clear() {
+        ids.fill(-1L)
+        values.fill(0f)
     }
 }

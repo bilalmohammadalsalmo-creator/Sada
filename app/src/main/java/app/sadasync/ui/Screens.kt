@@ -63,12 +63,17 @@ import app.sadasync.data.UpdateChecker
 import app.sadasync.data.UpdateInfo
 import app.sadasync.overlay.PanelAccessibilityService
 import app.sadasync.sync.CaptureHolder
+import app.sadasync.data.Prefs
 import app.sadasync.sync.CaptureProjectionActivity
+import app.sadasync.sync.EngineUi
+import app.sadasync.sync.EnvelopeStore
+import app.sadasync.sync.SyncBrain
+import app.sadasync.util.AppLog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-private val TABS = listOf("الرئيسية", "المكتبة", "الإعدادات", "الدعم")
+private val TABS = listOf("الرئيسية", "المكتبة", "الإعدادات", "التشخيص", "الدعم")
 
 @Composable
 fun MainScreen() {
@@ -84,6 +89,7 @@ fun MainScreen() {
             0 -> HomeTab()
             1 -> LibraryTab()
             2 -> SettingsTab()
+            3 -> DiagnosticsTab()
             else -> SupportTab()
         }
     }
@@ -150,15 +156,57 @@ private fun HomeTab() {
         Spacer(Modifier.height(12.dp))
         Text("التشغيل الآن", style = MaterialTheme.typography.titleLarge)
         Text(ui.source?.name ?: "لم تختر مصدرًا بعد (من المكتبة)")
-        if (ui.status.isNotEmpty() || ui.syncStatus.isNotEmpty()) {
-            Text(listOf(ui.status, ui.syncStatus).filter { it.isNotEmpty() }.joinToString(" • "))
-        }
+        if (ui.status.isNotEmpty()) Text(ui.status)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             TvButton(if (ui.playing) "إيقاف" else "تشغيل", primary = true) { app.player.toggle() }
             TvButton("−0.5") { app.player.nudgeDelay(-500) }
-            Text("التوقيت ${fmtDelay(ui.delayMs)} ث")
+            Text("تأخير صوتك ${fmtDelay(ui.delayMs)} ث")
             TvButton("+0.5") { app.player.nudgeDelay(500) }
-            TvButton("مزامنة تلقائية") { app.autoSync.start() }
+        }
+        Spacer(Modifier.height(8.dp))
+        SyncCard()
+    }
+}
+
+private fun phaseLabel(e: EngineUi): String = when {
+    !e.enabled -> "متوقفة"
+    e.brain.chanSilent || e.brain.extSilent -> "لا صوت"
+    e.brain.phase == SyncBrain.Phase.LOCKED -> "متزامن ✓"
+    e.brain.phase == SyncBrain.Phase.APPLYING -> "يطبّق…"
+    e.brain.phase == SyncBrain.Phase.SEARCHING -> "يطابق…"
+    else -> "يستمع…"
+}
+
+private fun phaseColor(e: EngineUi): Color = when {
+    !e.enabled -> Color(0xFF8A8F98)
+    e.brain.chanSilent || e.brain.extSilent -> Color(0xFFFF6B6B)
+    e.brain.phase == SyncBrain.Phase.LOCKED -> Color(0xFF5BD97B)
+    else -> Accent
+}
+
+/** بطاقة حالة المزامنة التلقائية المستمرة. */
+@Composable
+private fun SyncCard() {
+    val app = App.instance
+    val eng by app.autoSync.ui.collectAsState()
+    val info = eng.brain
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("المزامنة التلقائية", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text(phaseLabel(eng), color = phaseColor(eng), style = MaterialTheme.typography.titleMedium)
+            }
+            Text(info.text)
+            info.offsetMs?.let { Text("الفرق المقاس: ${String.format(Locale.US, "%+.2f", it / 1000.0)} ث") }
+            Text("الالتقاط: ${eng.capture}")
+            Text("الريسيفر: ${eng.control}")
+            if (eng.lastAction.isNotEmpty()) Text("آخر إجراء: ${eng.lastAction}")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvButton(if (eng.enabled) "إيقاف المزامنة" else "تشغيل المزامنة", primary = true) {
+                    if (eng.enabled) app.autoSync.stop() else app.autoSync.start()
+                }
+                TvButton("مزامنة الآن") { app.autoSync.resync() }
+            }
         }
     }
 }
@@ -264,36 +312,158 @@ private fun AddUrlDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
 @Composable
 private fun SettingsTab() {
     val app = App.instance
+    val prefs = app.prefs
     val ui by app.player.ui.collectAsState()
-    var trigger by remember { mutableIntStateOf(app.prefs.triggerKey) }
-    var autoResync by remember { mutableStateOf(app.prefs.autoResyncOnChannelChange) }
-    var learning by remember { mutableStateOf(false) }
+    var trigger by remember { mutableIntStateOf(prefs.triggerKey) }
+    var autoResync by remember { mutableStateOf(prefs.autoResyncOnChannelChange) }
+    var autoSync by remember { mutableStateOf(prefs.autoSyncEnabled) }
+    var fromMic by remember { mutableStateOf(prefs.captureFromMic) }
+    var mode by remember { mutableIntStateOf(prefs.controlMode) }
+    var pauseKey by remember { mutableIntStateOf(prefs.pauseKey) }
+    var resumeKey by remember { mutableIntStateOf(prefs.resumeKey) }
+    var calib by remember { mutableIntStateOf(prefs.calibMs) }
+    // 0 = لا شيء، 1 = زر فتح اللوحة، 2 = زر الإيقاف المؤقت، 3 = زر الاستئناف
+    var learning by remember { mutableIntStateOf(0) }
 
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("زر فتح اللوحة (ضغطتان سريعتان): ${keyName(trigger)}", style = MaterialTheme.typography.bodyLarge)
-        TvButton("تغيير الزر") { learning = true }
-
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Switch(checked = autoResync, onCheckedChange = {
-                autoResync = it
-                app.prefs.autoResyncOnChannelChange = it
-            })
-            Text("إعادة المزامنة تلقائيًا بعد تغيير القناة")
+        Text("المزامنة التلقائية", style = MaterialTheme.typography.titleLarge)
+        SwitchRow("المزامنة التلقائية المستمرة", autoSync) {
+            autoSync = it
+            if (it) app.autoSync.start() else app.autoSync.stop()
+        }
+        SwitchRow("إعادة القياس تلقائيًا بعد تغيير القناة", autoResync) {
+            autoResync = it
+            prefs.autoResyncOnChannelChange = it
+        }
+        SwitchRow("التقاط صوت القناة من الميكروفون بدل صوت النظام", fromMic) {
+            fromMic = it
+            prefs.captureFromMic = it
         }
 
-        Text("التوقيت الحالي: ${fmtDelay(ui.delayMs)} ث")
+        Text("التحكم بالريسيفر (تأخير الصورة)", style = MaterialTheme.typography.titleLarge)
+        val modeName = when (mode) {
+            Prefs.CONTROL_ROOT -> "root فقط"
+            Prefs.CONTROL_ADB -> "ADB المحلي فقط"
+            Prefs.CONTROL_MEDIA -> "مفتاح وسائط عام فقط"
+            else -> "تلقائي (root ثم ADB ثم مفتاح وسائط)"
+        }
+        Text("الطريقة: $modeName")
+        TvButton("تغيير الطريقة") {
+            mode = (mode + 1) % 4
+            prefs.controlMode = mode
+        }
+        Text("زر الإيقاف المؤقت المرسل للريسيفر: ${keyName(pauseKey)}")
+        TvButton("تغيير زر الإيقاف") { learning = 2 }
+        Text("زر الاستئناف المرسل للريسيفر: ${keyName(resumeKey)}")
+        TvButton("تغيير زر الاستئناف") { learning = 3 }
+        Text("(الافتراضي PLAY_PAUSE لكليهما، ويعمل كمبدّل. جرّب من تبويب التشخيص.)")
+
+        Text("معايرة دقيقة: ${String.format(Locale.US, "%+d", calib)} م.ث")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TvButton("−20") { calib -= 20; prefs.calibMs = calib }
+            TvButton("+20") { calib += 20; prefs.calibMs = calib }
+            TvButton("تصفير") { calib = 0; prefs.calibMs = 0 }
+        }
+        Text("(إن بقي فرق ثابت بين الصوت والصورة بعد المزامنة، عدّل هذه القيمة وأعد المزامنة.)")
+
+        Text("اللوحة والريموت", style = MaterialTheme.typography.titleLarge)
+        Text("زر فتح اللوحة (ضغطتان سريعتان): ${keyName(trigger)}", style = MaterialTheme.typography.bodyLarge)
+        TvButton("تغيير الزر") { learning = 1 }
+
+        Text("التوقيت الحالي لصوتك: ${fmtDelay(ui.delayMs)} ث")
         TvButton("تصفير التوقيت") { app.player.setDelay(0) }
     }
 
-    if (learning) {
+    if (learning != 0) {
         KeyLearnDialog(
             onKey = {
-                app.prefs.triggerKey = it
-                trigger = it
-                learning = false
+                when (learning) {
+                    1 -> { prefs.triggerKey = it; trigger = it }
+                    2 -> { prefs.pauseKey = it; pauseKey = it }
+                    else -> { prefs.resumeKey = it; resumeKey = it }
+                }
+                learning = 0
             },
-            onDismiss = { learning = false },
+            onDismiss = { learning = 0 },
         )
+    }
+}
+
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Switch(checked = checked, onCheckedChange = onChange)
+        Text(label)
+    }
+}
+
+// ---------------------------------------------------------------- التشخيص
+
+@Composable
+private fun DiagnosticsTab() {
+    val app = App.instance
+    val scope = rememberCoroutineScope()
+    val eng by app.autoSync.ui.collectAsState()
+    val ui by app.player.ui.collectAsState()
+    var chanLvl by remember { mutableIntStateOf(0) }
+    var extLvl by remember { mutableIntStateOf(0) }
+    var log by remember { mutableStateOf("") }
+    var testMsg by remember { mutableStateOf("") }
+    var testing by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            val now = System.nanoTime()
+            val n = 2 * EnvelopeStore.BUCKETS_PER_SEC
+            val from = now - n * EnvelopeStore.BUCKET_NS
+            chanLvl = app.autoSync.chanEnv.slice(from, n).max().toInt()
+            extLvl = app.player.refEnvelope.slice(from, n).max().toInt()
+            log = AppLog.dump().lines().takeLast(14).joinToString("\n")
+            delay(500)
+        }
+    }
+
+    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("التشخيص", style = MaterialTheme.typography.titleLarge)
+        Text("إن لم تعمل المزامنة، هذه الشاشة تدلّك أي جزء ناقص بالضبط.")
+
+        StatusRow("صوتك يعمل (مستوى $extLvl)", extLvl >= 5) {
+            Text(if (ui.playing) "الصوت يعمل لكن بلا إشارة" else "شغّل مصدرًا من المكتبة")
+        }
+        StatusRow("صوت القناة يصل للتطبيق (مستوى $chanLvl)", chanLvl >= 5) {
+            Text(
+                when {
+                    !eng.capturing -> eng.capture
+                    else -> "الالتقاط يعمل لكن لا يصله صوت. غالبًا يمنع الجهاز التقاط صوت القنوات؛ جرّب خيار الميكروفون من الإعدادات"
+                }
+            )
+        }
+        Text("حالة الالتقاط: ${eng.capture}")
+        Text("حالة التحكم بالريسيفر: ${eng.control}")
+
+        Spacer(Modifier.height(6.dp))
+        Text("اختبار التحكم بالريسيفر", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "شغّل قناة، ثم اضغط الزر: سيرسل إيقافًا مؤقتًا ثم يستأنف بعد 3 ثوانٍ. إن تجمّدت الصورة فالتحكم يعمل. " +
+                "لطريقة ADB: فعّل خيارات المطوّر ثم \"تصحيح ADB عبر الشبكة\"، ووافق على المفتاح عند ظهور النافذة."
+        )
+        TvButton(if (testing) "جارٍ الاختبار…" else "اختبار الإيقاف المؤقت", primary = true, enabled = !testing) {
+            testing = true
+            testMsg = "جارٍ الاتصال بالريسيفر…"
+            scope.launch {
+                testMsg = try {
+                    app.autoSync.control.testPulse()
+                } catch (e: Exception) {
+                    "فشل: ${e.message}"
+                }
+                testing = false
+            }
+        }
+        if (testMsg.isNotEmpty()) Text(testMsg, color = Accent)
+
+        Spacer(Modifier.height(6.dp))
+        Text("آخر السجلات", style = MaterialTheme.typography.titleMedium)
+        Text(log.ifEmpty { "—" }, style = MaterialTheme.typography.bodySmall)
     }
 }
 
