@@ -49,6 +49,10 @@ class PanelView(ctx: Context) : View(ctx) {
     private val rows: List<Row>
     private var sel = 0
 
+    // المزامنة بنقرتين: 0 = جاهز، 1 = بانتظار الضغطة الثانية
+    private var tapStep = 0
+    private var tapT1 = 0L
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.DEFAULT }
     private val rect = RectF()
@@ -74,6 +78,11 @@ class PanelView(ctx: Context) : View(ctx) {
             ),
             Row("مزامنة الآن", { "اضغط" }, onCenter = { e.resync(); false }),
             Row(
+                "مزامنة بنقرتين",
+                { if (tapStep == 0) "اضغط (1/2)" else "عند التعليق (2/2)" },
+                onCenter = { tapSync(e); false },
+            ),
+            Row(
                 "تأخير صوتك", { arrows(fmtDelay(p.ui.value.delayMs)) },
                 onLeft = { p.nudgeDelay(-500) }, onRight = { p.nudgeDelay(500) },
                 onCenter = { p.setDelay(0); false },
@@ -85,6 +94,19 @@ class PanelView(ctx: Context) : View(ctx) {
             Row("الصوت", { if (p.ui.value.myAudio) "صوتي" else "صوت القناة" }, onCenter = { p.toggleMyAudio(); false }),
             Row("إغلاق", { "" }, onCenter = { true }),
         )
+    }
+
+    /** النقرة الأولى عند سماع الحدث في القناة، والثانية عند سماعه في التعليق. */
+    private fun tapSync(e: app.sadasync.sync.AutoSyncEngine) {
+        val now = System.nanoTime()
+        if (tapStep == 1 && (now - tapT1) > 60_000_000_000L) tapStep = 0 // انتهت المهلة
+        if (tapStep == 0) {
+            tapT1 = now
+            tapStep = 1
+        } else {
+            tapStep = 0
+            e.manualOffset(((now - tapT1) / 1_000_000L).toInt())
+        }
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -171,9 +193,9 @@ class PanelView(ctx: Context) : View(ctx) {
         // ----- القائمة (اليمين)
         val menuRight = w - pad
         val menuLeft = menuRight - menuW
-        val rowH = dp(38f)
+        val rowH = dp(34f)
         rows.forEachIndexed { i, r ->
-            val y = top + i * (rowH + dp(4f))
+            val y = top + i * (rowH + dp(3f))
             rect.set(menuLeft, y, menuRight, y + rowH)
             if (i == sel) {
                 paint.style = Paint.Style.FILL
@@ -188,9 +210,9 @@ class PanelView(ctx: Context) : View(ctx) {
                 paint.color = 0x14FFFFFF
                 c.drawRoundRect(rect, dp(12f), dp(12f), paint)
             }
-            drawText(c, r.label, menuRight - dp(14f), y + dp(25f), 16f, Color.WHITE, true)
+            drawText(c, r.label, menuRight - dp(14f), y + dp(23f), 16f, Color.WHITE, true)
             val v = fit(r.value(), menuW * 0.5f, 15f)
-            drawText(c, v, menuLeft + dp(14f), y + dp(25f), 15f, GOLD, false)
+            drawText(c, v, menuLeft + dp(14f), y + dp(23f), 15f, GOLD, false)
         }
 
         // ----- التفاصيل (اليسار)
