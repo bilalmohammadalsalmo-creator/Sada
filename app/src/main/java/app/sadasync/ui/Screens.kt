@@ -23,8 +23,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.focus.FocusDirection
@@ -100,10 +100,12 @@ private val TABS = listOf(
     NavItem("الدعم", SadaIcon.Support),
 )
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun MainScreen() {
     var tab by rememberSaveable { mutableStateOf(0) }
     val navReqs = remember { List(TABS.size) { FocusRequester() } }
+    val focusManager = LocalFocusManager.current
 
     LaunchedEffect(Unit) {
         delay(150)
@@ -165,8 +167,30 @@ fun MainScreen() {
                 }
             }
         }
-        // الصفحة: التنقل داخلها عادي، وللرجوع إلى القائمة اضغط السهم نحو اليمين
-        Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 40.dp, vertical = 28.dp)) {
+        // الصفحة: أعلى/أسفل = خانة واحدة بالترتيب بلا قفز. السهم نحو اليمين من أقصى الصفحة = الرجوع للقائمة (بدون زر Back)
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .focusProperties {
+                    exit = { dir ->
+                        when (dir) {
+                            FocusDirection.Right -> navReqs[tab]
+                            else -> FocusRequester.Cancel
+                        }
+                    }
+                }
+                .focusGroup()
+                .onKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
+                    when (e.key) {
+                        Key.DirectionDown -> { focusManager.moveFocus(FocusDirection.Next); true }
+                        Key.DirectionUp -> { focusManager.moveFocus(FocusDirection.Previous); true }
+                        else -> false
+                    }
+                }
+                .padding(horizontal = 40.dp, vertical = 28.dp)
+        ) {
             when (tab) {
                 0 -> HomeTab()
                 1 -> LibraryTab()
