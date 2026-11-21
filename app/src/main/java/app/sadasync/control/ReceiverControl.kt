@@ -104,6 +104,40 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         false
     }
 
+    /** يقرأ خاصية نظام (reflection ثم getprop). يعيد نصًا فارغًا إن تعذّر. */
+    private fun sysProp(key: String): String {
+        try {
+            val c = Class.forName("android.os.SystemProperties")
+            val v = c.getMethod("get", String::class.java, String::class.java).invoke(null, key, "") as String
+            if (v.isNotEmpty()) return v
+        } catch (_: Throwable) {
+        }
+        return try {
+            val p = Runtime.getRuntime().exec(arrayOf("getprop", key))
+            val t = p.inputStream.bufferedReader().readText().trim()
+            p.waitFor(1, TimeUnit.SECONDS)
+            t
+        } catch (_: Throwable) {
+            ""
+        }
+    }
+
+    /** المنافذ المرشحة لـ ADB المحلي: ما يعلنه النظام أولًا ثم 5555. */
+    fun adbPorts(): List<Int> {
+        val l = mutableListOf<Int>()
+        for (k in listOf("service.adb.tcp.port", "persist.adb.tcp.port")) {
+            sysProp(k).toIntOrNull()?.let { if (it > 0) l += it }
+        }
+        l += 5555
+        return l.distinct()
+    }
+
+    /** نص تشخيصي عن حالة ADB في النظام (للعرض في شاشة التشخيص). */
+    fun adbInfo(): String = listOf(
+        "service.adb.tcp.port", "persist.adb.tcp.port", "service.adb.tls.port",
+        "init.svc.adbd", "ro.adb.secure", "ro.debuggable", "persist.sys.usb.config", "sys.usb.config",
+    ).joinToString("\n") { "$it = ${sysProp(it).ifEmpty { "—" }}" }
+
     /** يفتح مرسلًا حسب الإعداد. [authWaitMs] مهلة قبول مفتاح ADB على الشاشة (طويلة فقط في الاختبار اليدوي). */
     suspend fun open(authWaitMs: Int = 8_000): KeySender = withContext(Dispatchers.IO) {
         val mode = prefs.controlMode
@@ -119,12 +153,14 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
             }
         }
         if (mode == Prefs.CONTROL_AUTO || mode == Prefs.CONTROL_ADB) {
-            try {
-                val c = adb.connect(authWaitMs = authWaitMs)
-                status = Status(Method.ADB, "تحكم عبر ADB المحلي")
-                return@withContext AdbSender(c)
-            } catch (e: Exception) {
-                errors += "ADB: ${e.message ?: e.javaClass.simpleName}"
+            for (port in adbPorts()) {
+                try {
+                    val c = adb.connect(port = port, authWaitMs = authWaitMs)
+                    status = Status(Method.ADB, "تحكم عبر ADB المحلي (منفذ $port)")
+                    return@withContext AdbSender(c)
+                } catch (e: Exception) {
+                    errors += "ADB $port: ${e.message?.take(70) ?: e.javaClass.simpleName}"
+                }
             }
         }
         if (mode == Prefs.CONTROL_AUTO || mode == Prefs.CONTROL_MEDIA) {
