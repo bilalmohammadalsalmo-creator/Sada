@@ -26,9 +26,9 @@ android {
             "\"https://raw.githubusercontent.com/bilalmohammadalsalmo-creator/Sada/main/update.json\""
         )
         // وسائل الدعم: اتركها فارغة لإخفائها. مثال واتساب: https://wa.me/9627XXXXXXXX  تيليغرام: https://t.me/username
-        buildConfigField("String", "SUPPORT_WHATSAPP", "\"\"")
-        buildConfigField("String", "SUPPORT_TELEGRAM", "\"\"")
-        buildConfigField("String", "SUPPORT_PHONE", "\"\"")
+        buildConfigField("String", "SUPPORT_WHATSAPP", "\"https://wa.me/962782154659\"")
+        buildConfigField("String", "SUPPORT_TELEGRAM", "\"https://t.me/BilalAlsalmo\"")
+        buildConfigField("String", "SUPPORT_PHONE", "\"+962 78 215 4659\"")
     }
 
     // مفتاح توقيع ثابت: بدونه لا يقبل أندرويد تحديث التطبيق فوق نسخة سابقة. يُمرَّر من أسرار GitHub (انظر README).
