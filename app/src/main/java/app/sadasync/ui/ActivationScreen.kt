@@ -64,7 +64,7 @@ fun ActivationScreen(onActivated: () -> Unit) {
                 r.forEach { d ->
                     TvButton(
                         d,
-                        Modifier.width(96.dp).then(if (d == "1") Modifier.focusRequester(first) else Modifier),
+                        Modifier.width(110.dp).then(if (d == "1") Modifier.focusRequester(first) else Modifier),
                     ) {
                         if (code.length < 6) code += d
                         error = null
@@ -74,9 +74,9 @@ fun ActivationScreen(onActivated: () -> Unit) {
             Spacer(Modifier.height(10.dp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TvButton("مسح", Modifier.width(96.dp)) { code = "" }
-            TvButton("0", Modifier.width(96.dp)) { if (code.length < 6) code += "0" }
-            TvButton("⌫", Modifier.width(96.dp)) { code = code.dropLast(1) }
+            TvButton("مسح", Modifier.width(110.dp)) { code = "" }
+            TvButton("0", Modifier.width(110.dp)) { if (code.length < 6) code += "0" }
+            TvButton("⌫", Modifier.width(110.dp)) { code = code.dropLast(1) }
         }
         Spacer(Modifier.height(16.dp))
         TvButton("تفعيل", primary = true, enabled = code.length == 6 && !busy) {

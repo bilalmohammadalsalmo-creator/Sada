@@ -12,16 +12,44 @@ android {
         applicationId = "app.sadasync"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        // يمكن تجاوزهما من سطر الأوامر (يفعل ذلك سير العمل على GitHub عند نشر إصدار): -PverCode=2 -PverName=1.2
+        versionCode = (project.findProperty("verCode") as String?)?.toIntOrNull() ?: 1
+        versionName = (project.findProperty("verName") as String?) ?: "0.1.0"
 
         // غيّر هذين السطرين إلى عنوان خادمك واسم بوت الدعم عندك
         buildConfigField("String", "API_BASE", "\"https://example.com/api\"")
         buildConfigField("String", "SUPPORT_BOT", "\"@your_support_bot\"")
+
+        // رابط ملف التحديث (update.json في المستودع). غيّر اسم المستخدم/المستودع إن لزم.
+        buildConfigField(
+            "String", "UPDATE_URL",
+            "\"https://raw.githubusercontent.com/bilalmohammadalsalmo-creator/Sada/main/update.json\""
+        )
+        // وسائل الدعم: اتركها فارغة لإخفائها. مثال واتساب: https://wa.me/9627XXXXXXXX  تيليغرام: https://t.me/username
+        buildConfigField("String", "SUPPORT_WHATSAPP", "\"\"")
+        buildConfigField("String", "SUPPORT_TELEGRAM", "\"\"")
+        buildConfigField("String", "SUPPORT_PHONE", "\"\"")
+    }
+
+    // مفتاح توقيع ثابت: بدونه لا يقبل أندرويد تحديث التطبيق فوق نسخة سابقة. يُمرَّر من أسرار GitHub (انظر README).
+    val ksPath: String? = System.getenv("KEYSTORE_PATH")
+    signingConfigs {
+        if (ksPath != null) {
+            create("sada") {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
-        release { isMinifyEnabled = false }
+        debug { if (ksPath != null) signingConfig = signingConfigs.getByName("sada") }
+        release {
+            isMinifyEnabled = false
+            if (ksPath != null) signingConfig = signingConfigs.getByName("sada")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -49,4 +77,5 @@ dependencies {
     implementation("androidx.media3:media3-common:$media3")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("com.google.zxing:core:3.5.3")
 }

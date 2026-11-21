@@ -18,7 +18,7 @@ data class UpdateInfo(val versionCode: Int, val versionName: String, val apkUrl:
 object UpdateChecker {
     /** يعيد معلومات التحديث إن وُجدت نسخة أحدث، وإلا null. */
     suspend fun check(): UpdateInfo? {
-        val o = JSONObject(Http.get("${BuildConfig.API_BASE}/update.json"))
+        val o = JSONObject(Http.get(BuildConfig.UPDATE_URL))
         val info = UpdateInfo(
             versionCode = o.optInt("versionCode", 0),
             versionName = o.optString("versionName"),

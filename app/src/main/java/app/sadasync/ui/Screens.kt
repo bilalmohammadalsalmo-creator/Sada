@@ -23,12 +23,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -73,24 +79,71 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-private val TABS = listOf("الرئيسية", "المكتبة", "الإعدادات", "التشخيص", "الدعم")
+private data class NavItem(val label: String, val icon: SadaIcon)
+
+private val TABS = listOf(
+    NavItem("الرئيسية", SadaIcon.Home),
+    NavItem("المكتبة", SadaIcon.Library),
+    NavItem("الإعدادات", SadaIcon.Settings),
+    NavItem("التشخيص", SadaIcon.Pulse),
+    NavItem("الدعم", SadaIcon.Support),
+)
 
 @Composable
 fun MainScreen() {
     var tab by rememberSaveable { mutableStateOf(0) }
-    Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 24.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("صدى", style = MaterialTheme.typography.headlineMedium, color = Accent)
-            Spacer(Modifier.width(24.dp))
-            TABS.forEachIndexed { i, t -> TvButton(t, primary = i == tab) { tab = i } }
+    Row(Modifier.fillMaxSize()) {
+        // القائمة الجانبية (على اليمين في الواجهة العربية)
+        Column(
+            Modifier
+                .fillMaxHeight()
+                .width(280.dp)
+                .background(Surf1.copy(alpha = 0.85f))
+                .padding(horizontal = 18.dp, vertical = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                Modifier.padding(start = 8.dp, bottom = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SIcon(SadaIcon.Wave, tint = Accent, iconSize = 52.dp)
+                Text("صدى", fontSize = 38.sp, fontWeight = FontWeight.Bold, color = TextMain)
+            }
+            TABS.forEachIndexed { i, t ->
+                FocusBox(
+                    onClick = { tab = i },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    color = if (i == tab) Accent.copy(alpha = 0.22f) else Color.Transparent,
+                    focusedColor = Surf3,
+                ) { focused ->
+                    // تنقّل سلس: مجرد الوصول للعنصر بالريموت يفتح صفحته
+                    LaunchedEffect(focused) { if (focused) tab = i }
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        SIcon(t.icon, tint = if (i == tab) Accent else TextMain, iconSize = 36.dp)
+                        Text(
+                            t.label,
+                            fontSize = 23.sp,
+                            fontWeight = if (i == tab) FontWeight.Bold else FontWeight.Medium,
+                            color = if (i == tab) AccentHi else TextMain,
+                        )
+                    }
+                }
+            }
         }
-        Spacer(Modifier.height(20.dp))
-        when (tab) {
-            0 -> HomeTab()
-            1 -> LibraryTab()
-            2 -> SettingsTab()
-            3 -> DiagnosticsTab()
-            else -> SupportTab()
+        Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 40.dp, vertical = 28.dp)) {
+            when (tab) {
+                0 -> HomeTab()
+                1 -> LibraryTab()
+                2 -> SettingsTab()
+                3 -> DiagnosticsTab()
+                else -> SupportTab()
+            }
         }
     }
 }
@@ -110,6 +163,39 @@ private fun keyName(code: Int) = KeyEvent.keyCodeToString(code).removePrefix("KE
 
 private fun fmtDelay(ms: Int) = String.format(Locale.US, "%+.1f", ms / 1000.0)
 
+/** بلاطة حالة: أيقونة ملوّنة + عنوان + وصف قصير + زر إجراء عند الحاجة. */
+@Composable
+private fun StatusTile(
+    icon: SadaIcon,
+    title: String,
+    state: String,
+    ok: Boolean?,
+    modifier: Modifier = Modifier,
+    action: (@Composable () -> Unit)? = null,
+) {
+    val c = when (ok) {
+        true -> Good
+        false -> Bad
+        null -> Muted
+    }
+    SadaCard(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(
+                Modifier.size(60.dp).background(c.copy(alpha = 0.16f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) { SIcon(icon, tint = c, iconSize = 34.dp) }
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+                Text(state, color = c, fontSize = 17.sp)
+            }
+        }
+        if (action != null) {
+            Spacer(Modifier.height(14.dp))
+            action()
+        }
+    }
+}
+
 @Composable
 private fun StatusRow(label: String, ok: Boolean, action: (@Composable () -> Unit)? = null) {
     Row(
@@ -117,8 +203,8 @@ private fun StatusRow(label: String, ok: Boolean, action: (@Composable () -> Uni
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(if (ok) "✓" else "✗", color = if (ok) Color(0xFF5BD97B) else Color(0xFFFF6B6B))
-        Text(label, Modifier.weight(1f))
+        SIcon(if (ok) SadaIcon.Check else SadaIcon.Cross, tint = if (ok) Good else Bad, iconSize = 28.dp)
+        Text(label, Modifier.weight(1f), fontSize = 19.sp)
         if (!ok) action?.invoke()
     }
 }
@@ -129,59 +215,86 @@ private fun HomeTab() {
     val app = App.instance
     val ui by app.player.ui.collectAsState()
     val captureOn by CaptureHolder.active.collectAsState()
+    val eng by app.autoSync.ui.collectAsState()
     var tick by remember { mutableIntStateOf(0) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
     val a11yOn = remember(tick) { isAccessibilityEnabled(ctx) }
 
-    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("الحالة", style = MaterialTheme.typography.titleLarge)
-        StatusRow("الجهاز مفعّل برمز الدعوة", true)
-        StatusRow("خدمة الوصول (اللوحة فوق القناة)", a11yOn) {
-            TvButton("فتح إعدادات الوصول", primary = true) {
-                ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            StatusRow("المزامنة التلقائية (التقاط صوت القناة)", captureOn) {
-                TvButton("السماح") { ctx.startActivity(Intent(ctx, CaptureProjectionActivity::class.java)) }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "كيف تستخدمه: شغّل القناة ثم اضغط زر ${keyName(app.prefs.triggerKey)} في الريموت مرتين " +
-                "لتظهر اللوحة فوق القناة.",
-            style = MaterialTheme.typography.bodyLarge,
-        )
+    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        PageHeader(SadaIcon.Home, "الرئيسية", "تعليق عربي متزامن تلقائيًا مع صورة القناة")
 
-        Spacer(Modifier.height(12.dp))
-        Text("التشغيل الآن", style = MaterialTheme.typography.titleLarge)
-        Text(ui.source?.name ?: "لم تختر مصدرًا بعد (من المكتبة)")
-        if (ui.status.isNotEmpty()) Text(ui.status)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            TvButton(if (ui.playing) "إيقاف" else "تشغيل", primary = true) { app.player.toggle() }
-            TvButton("−0.5") { app.player.nudgeDelay(-500) }
-            Text("تأخير صوتك ${fmtDelay(ui.delayMs)} ث")
-            TvButton("+0.5") { app.player.nudgeDelay(500) }
-        }
-        Spacer(Modifier.height(8.dp))
+        // بطاقة المزامنة الرئيسية
         SyncCard()
+
+        // حالة الأذونات والتحكم
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            StatusTile(
+                SadaIcon.Settings, "لوحة التحكم فوق القناة",
+                if (a11yOn) "مفعّلة" else "غير مفعّلة", a11yOn, Modifier.weight(1f),
+            ) {
+                if (!a11yOn) TvButton("فتح إعدادات الوصول", primary = true) {
+                    ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                StatusTile(
+                    SadaIcon.Pulse, "التقاط صوت القناة",
+                    if (captureOn) "يعمل" else "يحتاج إذنًا", captureOn, Modifier.weight(1f),
+                ) {
+                    if (!captureOn) TvButton("السماح", primary = true) {
+                        ctx.startActivity(Intent(ctx, CaptureProjectionActivity::class.java))
+                    }
+                }
+            }
+            StatusTile(
+                SadaIcon.Sync, "التحكم بالريسيفر",
+                eng.control, null, Modifier.weight(1f),
+            )
+        }
+
+        // التشغيل الآن
+        SadaCard(Modifier.fillMaxWidth()) {
+            Text("التشغيل الآن", style = MaterialTheme.typography.titleMedium, color = Muted)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                ui.source?.name ?: "لم تختر مصدرًا بعد (من المكتبة)",
+                style = MaterialTheme.typography.titleLarge,
+            )
+            if (ui.status.isNotEmpty()) Text(ui.status, color = Muted)
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TvButton(
+                    if (ui.playing) "إيقاف" else "تشغيل",
+                    primary = true,
+                    icon = if (ui.playing) SadaIcon.Stop else SadaIcon.Play,
+                ) { app.player.toggle() }
+                TvButton("0.5", icon = SadaIcon.Minus) { app.player.nudgeDelay(-500) }
+                Pill("تأخير صوتك ${fmtDelay(ui.delayMs)} ث", Accent)
+                TvButton("0.5", icon = SadaIcon.Plus) { app.player.nudgeDelay(500) }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "لإظهار اللوحة فوق القناة اضغط زر ${keyName(app.prefs.triggerKey)} في الريموت مرتين.",
+                color = Muted, fontSize = 17.sp,
+            )
+        }
     }
 }
 
 private fun phaseLabel(e: EngineUi): String = when {
-    !e.enabled -> "متوقفة"
-    e.brain.chanSilent || e.brain.extSilent -> "لا صوت"
-    e.brain.phase == SyncBrain.Phase.LOCKED -> "متزامن ✓"
-    e.brain.phase == SyncBrain.Phase.APPLYING -> "يطبّق…"
-    e.brain.phase == SyncBrain.Phase.SEARCHING -> "يطابق…"
-    else -> "يستمع…"
+    !e.enabled -> "المزامنة متوقفة"
+    e.brain.chanSilent || e.brain.extSilent -> "لا يوجد صوت"
+    e.brain.phase == SyncBrain.Phase.LOCKED -> "متزامن"
+    e.brain.phase == SyncBrain.Phase.APPLYING -> "جارٍ التطبيق"
+    e.brain.phase == SyncBrain.Phase.SEARCHING -> "جارٍ المطابقة"
+    else -> "يستمع للقناة"
 }
 
 private fun phaseColor(e: EngineUi): Color = when {
-    !e.enabled -> Color(0xFF8A8F98)
-    e.brain.chanSilent || e.brain.extSilent -> Color(0xFFFF6B6B)
-    e.brain.phase == SyncBrain.Phase.LOCKED -> Color(0xFF5BD97B)
-    else -> Accent
+    !e.enabled -> Muted
+    e.brain.chanSilent || e.brain.extSilent -> Bad
+    e.brain.phase == SyncBrain.Phase.LOCKED -> Good
+    else -> Gold
 }
 
 /** بطاقة حالة المزامنة التلقائية المستمرة. */
@@ -190,23 +303,39 @@ private fun SyncCard() {
     val app = App.instance
     val eng by app.autoSync.ui.collectAsState()
     val info = eng.brain
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("المزامنة التلقائية", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                Text(phaseLabel(eng), color = phaseColor(eng), style = MaterialTheme.typography.titleMedium)
+    val c = phaseColor(eng)
+    SadaCard(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Box(
+                Modifier.size(110.dp).background(c.copy(alpha = 0.16f), CircleShape).border(3.dp, c, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                SIcon(
+                    if (eng.brain.phase == SyncBrain.Phase.LOCKED && eng.enabled) SadaIcon.Check else SadaIcon.Sync,
+                    tint = c, iconSize = 60.dp,
+                )
             }
-            Text(info.text)
-            info.offsetMs?.let { Text("الفرق المقاس: ${String.format(Locale.US, "%+.2f", it / 1000.0)} ث") }
-            Text("الالتقاط: ${eng.capture}")
-            Text("الريسيفر: ${eng.control}")
-            if (eng.lastAction.isNotEmpty()) Text("آخر إجراء: ${eng.lastAction}")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TvButton(if (eng.enabled) "إيقاف المزامنة" else "تشغيل المزامنة", primary = true) {
-                    if (eng.enabled) app.autoSync.stop() else app.autoSync.start()
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("المزامنة التلقائية", color = Muted, fontSize = 19.sp)
+                Text(phaseLabel(eng), color = c, style = MaterialTheme.typography.headlineMedium)
+                Text(info.text, fontSize = 19.sp)
+                info.offsetMs?.let {
+                    Text(
+                        "الفرق المقاس: ${String.format(Locale.US, "%+.2f", it / 1000.0)} ث",
+                        color = Muted, fontSize = 18.sp,
+                    )
                 }
-                TvButton("مزامنة الآن") { app.autoSync.resync() }
+                if (eng.lastAction.isNotEmpty()) Text("آخر إجراء: ${eng.lastAction}", color = Muted, fontSize = 17.sp)
             }
+        }
+        Spacer(Modifier.height(18.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TvButton(
+                if (eng.enabled) "إيقاف المزامنة" else "تشغيل المزامنة",
+                primary = true,
+                icon = if (eng.enabled) SadaIcon.Stop else SadaIcon.Play,
+            ) { if (eng.enabled) app.autoSync.stop() else app.autoSync.start() }
+            TvButton("مزامنة الآن", icon = SadaIcon.Refresh) { app.autoSync.resync() }
         }
     }
 }
@@ -235,33 +364,61 @@ private fun LibraryTab() {
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TvButton("إضافة من رابط", primary = true) { showAdd = true }
-            TvButton("إضافة من الفلاشة أو التنزيلات") { picker.launch(arrayOf("*/*")) }
-            TvButton("تحديث القوائم الرسمية") {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        PageHeader(SadaIcon.Library, "المكتبة", "الصوتيات الخارجية (تعليق عربي)")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TvButton("إضافة رابط", primary = true, icon = SadaIcon.Plus) { showAdd = true }
+            TvButton("من الفلاشة", icon = SadaIcon.Folder) { picker.launch(arrayOf("*/*")) }
+            TvButton("تحديث الرسمية", icon = SadaIcon.Download) {
                 scope.launch { msg = if (app.sources.refreshOfficial()) "تم التحديث" else "تعذّر التحديث" }
             }
         }
-        if (msg.isNotEmpty()) Text(msg, color = Accent)
+        if (msg.isNotEmpty()) Text(msg, color = Accent, fontWeight = FontWeight.Bold)
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (sources.isEmpty()) {
+            SadaCard(Modifier.fillMaxWidth()) {
+                Text("لا توجد صوتيات بعد. أضف رابطًا أو ملف M3U / CFG من الفلاشة.", color = Muted)
+            }
+        }
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(sources, key = { it.id }) { s ->
                 val current = ui.source?.id == s.id
+                val playingNow = current && ui.playing
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text(
-                        (if (current) "▶ " else "") + s.name + if (s.official) "  (رسمي)" else "",
-                        Modifier.weight(1f),
-                        color = if (current) Accent else Color.Unspecified,
-                    )
-                    TvButton(if (current && ui.playing) "إيقاف" else "تشغيل", primary = true) {
-                        if (current && ui.playing) app.player.stop() else app.player.play(s)
+                    FocusBox(
+                        onClick = { if (playingNow) app.player.stop() else app.player.play(s) },
+                        modifier = Modifier.weight(1f),
+                        color = if (current) Accent.copy(alpha = 0.16f) else Surf1,
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            Box(
+                                Modifier.size(52.dp).background(if (playingNow) Accent else Surf3, CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                SIcon(
+                                    if (playingNow) SadaIcon.Stop else SadaIcon.Play,
+                                    tint = if (playingNow) OnAccent else TextMain, iconSize = 30.dp,
+                                )
+                            }
+                            Text(
+                                s.name, Modifier.weight(1f),
+                                fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+                                color = if (current) AccentHi else TextMain,
+                            )
+                            if (s.official) Pill("رسمي", Gold)
+                            if (playingNow) Pill("يعمل", Good)
+                        }
                     }
-                    if (!s.official) TvButton("حذف") { app.sources.remove(s.id) }
+                    if (!s.official) TvButton("حذف", icon = SadaIcon.Trash) { app.sources.remove(s.id) }
                 }
             }
         }
@@ -290,7 +447,10 @@ private fun AddUrlDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
     var url by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("إضافة رابط") },
+        containerColor = Surf1,
+        titleContentColor = TextMain,
+        textContentColor = TextMain,
+        title = { Text("إضافة رابط", fontWeight = FontWeight.Bold) },
         text = {
             // الروابط تُكتب من اليسار لليمين
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
@@ -310,6 +470,11 @@ private fun AddUrlDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
 // ---------------------------------------------------------------- الإعدادات
 
 @Composable
+private fun SectionLabel(text: String) {
+    Text(text, style = MaterialTheme.typography.titleMedium, color = Accent, modifier = Modifier.padding(top = 10.dp))
+}
+
+@Composable
 private fun SettingsTab() {
     val app = App.instance
     val prefs = app.prefs
@@ -325,53 +490,60 @@ private fun SettingsTab() {
     // 0 = لا شيء، 1 = زر فتح اللوحة، 2 = زر الإيقاف المؤقت، 3 = زر الاستئناف
     var learning by remember { mutableIntStateOf(0) }
 
-    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("المزامنة التلقائية", style = MaterialTheme.typography.titleLarge)
-        SwitchRow("المزامنة التلقائية المستمرة", autoSync) {
+    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        PageHeader(SadaIcon.Settings, "الإعدادات")
+
+        SectionLabel("المزامنة التلقائية")
+        ToggleRow("المزامنة التلقائية المستمرة", autoSync, "تقيس الفرق وتؤخر الصورة وحدها") {
             autoSync = it
             if (it) app.autoSync.start() else app.autoSync.stop()
         }
-        SwitchRow("إعادة القياس تلقائيًا بعد تغيير القناة", autoResync) {
+        ToggleRow("إعادة القياس بعد تغيير القناة", autoResync) {
             autoResync = it
             prefs.autoResyncOnChannelChange = it
         }
-        SwitchRow("التقاط صوت القناة من الميكروفون بدل صوت النظام", fromMic) {
+        ToggleRow("التقاط صوت القناة من الميكروفون", fromMic, "بدل صوت النظام (احتياطي)") {
             fromMic = it
             prefs.captureFromMic = it
         }
 
-        Text("التحكم بالريسيفر (تأخير الصورة)", style = MaterialTheme.typography.titleLarge)
+        SectionLabel("التحكم بالريسيفر (تأخير الصورة)")
         val modeName = when (mode) {
-            Prefs.CONTROL_ROOT -> "root فقط"
-            Prefs.CONTROL_ADB -> "ADB المحلي فقط"
-            Prefs.CONTROL_MEDIA -> "مفتاح وسائط عام فقط"
-            else -> "تلقائي (root ثم ADB ثم مفتاح وسائط)"
+            Prefs.CONTROL_ROOT -> "root"
+            Prefs.CONTROL_ADB -> "ADB"
+            Prefs.CONTROL_MEDIA -> "مفتاح وسائط"
+            else -> "تلقائي"
         }
-        Text("الطريقة: $modeName")
-        TvButton("تغيير الطريقة") {
+        ValueRow("الطريقة", modeName, "تلقائي: root ثم ADB ثم مفتاح وسائط. اضغط للتغيير") {
             mode = (mode + 1) % 4
             prefs.controlMode = mode
         }
-        Text("زر الإيقاف المؤقت المرسل للريسيفر: ${keyName(pauseKey)}")
-        TvButton("تغيير زر الإيقاف") { learning = 2 }
-        Text("زر الاستئناف المرسل للريسيفر: ${keyName(resumeKey)}")
-        TvButton("تغيير زر الاستئناف") { learning = 3 }
-        Text("(الافتراضي PLAY_PAUSE لكليهما، ويعمل كمبدّل. جرّب من تبويب التشخيص.)")
+        ValueRow("زر الإيقاف المؤقت", keyName(pauseKey), "الزر المرسل للريسيفر. اضغط ثم اختر زرًا") { learning = 2 }
+        ValueRow("زر الاستئناف", keyName(resumeKey), "الافتراضي PLAY_PAUSE لكليهما (مبدّل)") { learning = 3 }
 
-        Text("معايرة دقيقة: ${String.format(Locale.US, "%+d", calib)} م.ث")
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TvButton("−20") { calib -= 20; prefs.calibMs = calib }
-            TvButton("+20") { calib += 20; prefs.calibMs = calib }
-            TvButton("تصفير") { calib = 0; prefs.calibMs = 0 }
+        FocusBox({ }, Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("معايرة دقيقة", fontWeight = FontWeight.SemiBold, fontSize = 21.sp)
+                    Text("إن بقي فرق ثابت بعد المزامنة، عدّل القيمة", color = Muted, fontSize = 16.sp)
+                }
+                Pill(String.format(Locale.US, "%+d م.ث", calib), Accent)
+            }
         }
-        Text("(إن بقي فرق ثابت بين الصوت والصورة بعد المزامنة، عدّل هذه القيمة وأعد المزامنة.)")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TvButton("20", icon = SadaIcon.Minus) { calib -= 20; prefs.calibMs = calib }
+            TvButton("20", icon = SadaIcon.Plus) { calib += 20; prefs.calibMs = calib }
+            TvButton("تصفير", icon = SadaIcon.Refresh) { calib = 0; prefs.calibMs = 0 }
+        }
 
-        Text("اللوحة والريموت", style = MaterialTheme.typography.titleLarge)
-        Text("زر فتح اللوحة (ضغطتان سريعتان): ${keyName(trigger)}", style = MaterialTheme.typography.bodyLarge)
-        TvButton("تغيير الزر") { learning = 1 }
-
-        Text("التوقيت الحالي لصوتك: ${fmtDelay(ui.delayMs)} ث")
-        TvButton("تصفير التوقيت") { app.player.setDelay(0) }
+        SectionLabel("اللوحة والريموت")
+        ValueRow("زر فتح اللوحة", keyName(trigger), "ضغطتان سريعتان. اضغط ثم اختر زرًا") { learning = 1 }
+        ValueRow("التوقيت الحالي لصوتك", "${fmtDelay(ui.delayMs)} ث", "اضغط للتصفير") { app.player.setDelay(0) }
+        Spacer(Modifier.height(24.dp))
     }
 
     if (learning != 0) {
@@ -386,14 +558,6 @@ private fun SettingsTab() {
             },
             onDismiss = { learning = 0 },
         )
-    }
-}
-
-@Composable
-private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Switch(checked = checked, onCheckedChange = onChange)
-        Text(label)
     }
 }
 
@@ -423,47 +587,64 @@ private fun DiagnosticsTab() {
         }
     }
 
-    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("التشخيص", style = MaterialTheme.typography.titleLarge)
-        Text("إن لم تعمل المزامنة، هذه الشاشة تدلّك أي جزء ناقص بالضبط.")
+    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        PageHeader(SadaIcon.Pulse, "التشخيص", "إن لم تعمل المزامنة، هنا تعرف أي جزء ناقص")
 
-        StatusRow("صوتك يعمل (مستوى $extLvl)", extLvl >= 5) {
-            Text(if (ui.playing) "الصوت يعمل لكن بلا إشارة" else "شغّل مصدرًا من المكتبة")
-        }
-        StatusRow("صوت القناة يصل للتطبيق (مستوى $chanLvl)", chanLvl >= 5) {
-            Text(
-                when {
-                    !eng.capturing -> eng.capture
-                    else -> "الالتقاط يعمل لكن لا يصله صوت. غالبًا يمنع الجهاز التقاط صوت القنوات؛ جرّب خيار الميكروفون من الإعدادات"
-                }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            StatusTile(
+                SadaIcon.Library, "صوتك (التعليق)",
+                if (extLvl >= 5) "يعمل — المستوى $extLvl" else if (ui.playing) "يعمل بلا إشارة" else "شغّل مصدرًا من المكتبة",
+                extLvl >= 5, Modifier.weight(1f),
+            )
+            StatusTile(
+                SadaIcon.Pulse, "صوت القناة",
+                if (chanLvl >= 5) "يصل — المستوى $chanLvl"
+                else if (!eng.capturing) eng.capture
+                else "الالتقاط يعمل لكن لا يصله صوت. غالبًا يمنعه الجهاز؛ جرّب الميكروفون من الإعدادات",
+                chanLvl >= 5, Modifier.weight(1f),
             )
         }
-        Text("حالة الالتقاط: ${eng.capture}")
-        Text("حالة التحكم بالريسيفر: ${eng.control}")
+        SadaCard(Modifier.fillMaxWidth()) {
+            Text("الالتقاط: ${eng.capture}", fontSize = 18.sp)
+            Text("التحكم بالريسيفر: ${eng.control}", fontSize = 18.sp)
+        }
 
-        Spacer(Modifier.height(6.dp))
-        Text("اختبار التحكم بالريسيفر", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "شغّل قناة، ثم اضغط الزر: سيرسل إيقافًا مؤقتًا ثم يستأنف بعد 3 ثوانٍ. إن تجمّدت الصورة فالتحكم يعمل. " +
-                "لطريقة ADB: فعّل خيارات المطوّر ثم \"تصحيح ADB عبر الشبكة\"، ووافق على المفتاح عند ظهور النافذة."
-        )
-        TvButton(if (testing) "جارٍ الاختبار…" else "اختبار الإيقاف المؤقت", primary = true, enabled = !testing) {
-            testing = true
-            testMsg = "جارٍ الاتصال بالريسيفر…"
-            scope.launch {
-                testMsg = try {
-                    app.autoSync.control.testPulse()
-                } catch (e: Exception) {
-                    "فشل: ${e.message}"
+        SadaCard(Modifier.fillMaxWidth()) {
+            Text("اختبار التحكم بالريسيفر", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "شغّل قناة ثم اضغط الزر: سيرسل إيقافًا مؤقتًا ثم يستأنف بعد 3 ثوانٍ. إن تجمّدت الصورة فالتحكم يعمل. " +
+                    "لطريقة ADB: فعّل خيارات المطوّر ثم \"تصحيح ADB عبر الشبكة\"، ووافق على المفتاح عند ظهور النافذة.",
+                color = Muted, fontSize = 17.sp,
+            )
+            Spacer(Modifier.height(14.dp))
+            TvButton(
+                if (testing) "جارٍ الاختبار…" else "اختبار الإيقاف المؤقت",
+                primary = true, enabled = !testing, icon = SadaIcon.Play,
+            ) {
+                testing = true
+                testMsg = "جارٍ الاتصال بالريسيفر…"
+                scope.launch {
+                    testMsg = try {
+                        app.autoSync.control.testPulse()
+                    } catch (e: Exception) {
+                        "فشل: ${e.message}"
+                    }
+                    testing = false
                 }
-                testing = false
+            }
+            if (testMsg.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Text(testMsg, color = AccentHi, fontWeight = FontWeight.Bold)
             }
         }
-        if (testMsg.isNotEmpty()) Text(testMsg, color = Accent)
 
-        Spacer(Modifier.height(6.dp))
-        Text("آخر السجلات", style = MaterialTheme.typography.titleMedium)
-        Text(log.ifEmpty { "—" }, style = MaterialTheme.typography.bodySmall)
+        SadaCard(Modifier.fillMaxWidth()) {
+            Text("آخر السجلات", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(log.ifEmpty { "—" }, style = MaterialTheme.typography.bodySmall, color = Muted)
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -475,10 +656,10 @@ private fun KeyLearnDialog(onKey: (Int) -> Unit, onDismiss: () -> Unit) {
         runCatching { fr.requestFocus() }
     }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
+        Surface(shape = RoundedCornerShape(24.dp), color = Surf1) {
             Box(
                 Modifier
-                    .padding(32.dp)
+                    .padding(40.dp)
                     .focusRequester(fr)
                     .focusable()
                     .onKeyEvent { e ->
@@ -489,13 +670,18 @@ private fun KeyLearnDialog(onKey: (Int) -> Unit, onDismiss: () -> Unit) {
                         } else false
                     }
             ) {
-                Text("اضغط الآن على الزر الذي تريده في الريموت\n(زر الرجوع للإلغاء)")
+                Text(
+                    "اضغط الآن على الزر الذي تريده في الريموت\n(زر الرجوع للإلغاء)",
+                    fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextMain,
+                )
             }
         }
     }
 }
 
 // ---------------------------------------------------------------- الدعم والتحديث
+
+private val PROBLEMS = listOf("لا يتزامن الصوت", "لا يوجد صوت", "التطبيق يتوقف", "أخرى")
 
 @Composable
 private fun SupportTab() {
@@ -504,33 +690,105 @@ private fun SupportTab() {
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf("") }
     var update by remember { mutableStateOf<UpdateInfo?>(null) }
+    var problem by remember { mutableIntStateOf(0) }
+    var note by remember { mutableStateOf("") }
+    val wa = BuildConfig.SUPPORT_WHATSAPP
+    val tg = BuildConfig.SUPPORT_TELEGRAM
 
-    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("الإصدار ${BuildConfig.VERSION_NAME}  •  معرّف الجهاز ${app.prefs.deviceId.take(8)}")
-        Text("بوت الدعم: ${BuildConfig.SUPPORT_BOT}")
+    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        PageHeader(SadaIcon.Support, "الدعم والتحديث")
 
-        TvButton("التحقق من التحديث", primary = true) {
-            scope.launch {
-                msg = "جارٍ التحقق…"
-                try {
-                    val info = UpdateChecker.check()
-                    update = info
-                    msg = if (info == null) "أنت على آخر إصدار" else "يوجد إصدار جديد ${info.versionName}"
-                } catch (e: Exception) {
-                    msg = "تعذّر التحقق: ${e.message}"
+        // تواصل مباشر: امسح الرمز بهاتفك
+        if (wa.isNotEmpty() || tg.isNotEmpty()) {
+            SadaCard(Modifier.fillMaxWidth()) {
+                Text("تواصل معنا", style = MaterialTheme.typography.titleMedium)
+                Text("امسح الرمز بكاميرا هاتفك لفتح المحادثة", color = Muted, fontSize = 17.sp)
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (wa.isNotEmpty()) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            QrCode(wa, boxSize = 190.dp)
+                            Spacer(Modifier.height(8.dp))
+                            Text("واتساب", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (tg.isNotEmpty()) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            QrCode(tg, boxSize = 190.dp)
+                            Spacer(Modifier.height(8.dp))
+                            Text("تيليغرام", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (BuildConfig.SUPPORT_PHONE.isNotEmpty()) {
+                        Column {
+                            Text("أو اتصل / راسل على", color = Muted)
+                            Text(
+                                BuildConfig.SUPPORT_PHONE,
+                                fontSize = 30.sp, fontWeight = FontWeight.Bold, color = AccentHi,
+                            )
+                        }
+                    }
                 }
             }
         }
-        update?.let { u ->
-            if (u.notes.isNotEmpty()) Text(u.notes)
-            TvButton("تنزيل وتثبيت ${u.versionName}") { UpdateChecker.downloadAndInstall(ctx, u) }
-        }
 
-        TvButton("إرسال بلاغ للدعم (يرسل سجل التطبيق)") {
-            scope.launch {
-                msg = if (SupportReporter.send(app.prefs)) "أُرسل البلاغ" else "تعذّر إرسال البلاغ"
+        // نموذج بلاغ سريع
+        SadaCard(Modifier.fillMaxWidth()) {
+            Text("أرسل مشكلتك", style = MaterialTheme.typography.titleMedium)
+            Text("نرفق معها تلقائيًا سجل التطبيق ومعرّف جهازك", color = Muted, fontSize = 17.sp)
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PROBLEMS.forEachIndexed { i, label ->
+                    TvButton(label, primary = i == problem) { problem = i }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = note,
+                onValueChange = { note = it },
+                label = { Text("تفاصيل إضافية (اختياري)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            TvButton("إرسال", primary = true, icon = SadaIcon.Support) {
+                scope.launch {
+                    val text = PROBLEMS[problem] + if (note.isNotBlank()) " — ${note.trim()}" else ""
+                    msg = if (SupportReporter.send(app.prefs, text)) {
+                        note = ""
+                        "وصلنا بلاغك، شكرًا"
+                    } else {
+                        "تعذّر الإرسال. تأكد من الإنترنت أو تواصل معنا مباشرة"
+                    }
+                }
             }
         }
-        if (msg.isNotEmpty()) Text(msg, color = Accent)
+
+        SadaCard(Modifier.fillMaxWidth()) {
+            Text("الإصدار ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
+            Text("معرّف الجهاز: ${app.prefs.deviceId.take(8)}", color = Muted)
+            Spacer(Modifier.height(12.dp))
+            TvButton("التحقق من التحديث", primary = true, icon = SadaIcon.Refresh) {
+                scope.launch {
+                    msg = "جارٍ التحقق…"
+                    try {
+                        val info = UpdateChecker.check()
+                        update = info
+                        msg = if (info == null) "أنت على آخر إصدار" else "يوجد إصدار جديد ${info.versionName}"
+                    } catch (e: Exception) {
+                        msg = "تعذّر التحقق: ${e.message}"
+                    }
+                }
+            }
+            update?.let { u ->
+                Spacer(Modifier.height(12.dp))
+                if (u.notes.isNotEmpty()) Text(u.notes)
+                Spacer(Modifier.height(8.dp))
+                TvButton("تنزيل وتثبيت ${u.versionName}", primary = true, icon = SadaIcon.Download) {
+                    UpdateChecker.downloadAndInstall(ctx, u)
+                }
+            }
+        }
+        if (msg.isNotEmpty()) Text(msg, color = Accent, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(24.dp))
     }
 }

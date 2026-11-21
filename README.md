@@ -52,6 +52,15 @@
 
 نسخة التطوير (debug) تقبل أي رمز من 6 أرقام ما دام `API_BASE` لم يُغيَّر. نسخة release لا تقبل شيئًا قبل ضبط الخادم.
 
+## التحديث عبر الإنترنت (بدون خادم)
+
+1. تُبنى النسخ على GitHub Actions وتُوقَّع بمفتاح ثابت من أسرار المستودع (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`).
+2. لنشر إصدار جديد: عدّل `update.json` (ارفع `versionCode` واكتب الملاحظات)، ثم أنشئ وسمًا (Tag) باسم `v` + نفس الرقم، مثل `v2`.
+3. يبني GitHub التطبيق بـ `versionCode=2` ويرفعه إلى Releases باسم `sada.apk`، فيصبح الرابط الثابت `/releases/latest/download/sada.apk` هو نفسه المكتوب في `update.json`.
+4. المستخدم يضغط "التحقق من التحديث" في تبويب الدعم فيجد الإصدار الجديد وينزّله ويثبّته.
+
+الرابط الذي يقرأه التطبيق `UPDATE_URL` وأرقام الدعم `SUPPORT_WHATSAPP` / `SUPPORT_TELEGRAM` / `SUPPORT_PHONE` في `app/build.gradle.kts`.
+
 ## الخادم
 
 ```bash
