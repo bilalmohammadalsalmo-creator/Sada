@@ -207,8 +207,13 @@ class AutoSyncEngine(
     fun runPauseTest() {
         if (testing) return
         testing = true
-        _test.value = "جارٍ الاتصال بالريسيفر…"
         scope.launch {
+            // مهلة للخروج من التطبيق ومشاهدة القناة: الأمر يذهب للتطبيق الظاهر على الشاشة
+            for (n in 15 downTo 1) {
+                _test.value = "اخرج الآن إلى القناة وراقب الصورة… يبدأ الاختبار بعد $n ث"
+                delay(1000)
+            }
+            _test.value = "جارٍ إرسال أمر الإيقاف… راقب الصورة 5 ثوانٍ"
             _test.value = try {
                 control.testPulse()
             } catch (e: Exception) {
