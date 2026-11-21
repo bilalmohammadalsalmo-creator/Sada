@@ -197,6 +197,36 @@ class AutoSyncEngine(
         }
     }
 
+    /**
+     * مزامنة يدوية بنقرتين: [offsetMs] = كم يتأخر التعليق عن القناة كما سمعه المستخدم (يتضمن تأخير صوتنا الحالي).
+     * إن كان تأخير صوتنا الحالي يكفي نقلّله، وإلا نوقف الريسيفر (offset + 400) ثم نؤخّر صوتنا 400 ليتطابقا،
+     * ويبقى هامش 400 م.ث للضبط الدقيق بالزرين ±0.1.
+     */
+    fun manualOffset(offsetMs: Int) {
+        scope.launch {
+            val over = 400
+            val have = pc.ui.value.delayMs
+            when {
+                offsetMs < 150 -> note("الفرق المقاس صغير جدًا (${offsetMs} م.ث): لا تغيير")
+                offsetMs > 60_000 -> note("الفرق المقاس كبير جدًا: أعد المحاولة")
+                have >= offsetMs -> {
+                    pc.setDelay(have - offsetMs)
+                    note("يدوي: تقليل تأخير صوتك ${offsetMs} م.ث")
+                }
+                else -> {
+                    val r = control.pauseFor((offsetMs + over).toLong())
+                    if (!r.ok) {
+                        note("تعذّر التحكم بالريسيفر: ${r.error}")
+                    } else {
+                        pc.setDelay((have + over + prefs.calibMs).coerceIn(0, PlayerController.MAX_DELAY_MS))
+                        note("يدوي: تأخير الصورة ${offsetMs + over} م.ث")
+                    }
+                }
+            }
+            publish()
+        }
+    }
+
     private fun applyAudioDelta(deltaMs: Int, text: String) {
         val target = pc.ui.value.delayMs + deltaMs
         if (target > PlayerController.MAX_DELAY_MS || target < 0) {
