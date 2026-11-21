@@ -197,6 +197,27 @@ class AutoSyncEngine(
         }
     }
 
+    // اختبار الإيقاف المؤقت من شاشة التشخيص: يعمل في نطاق المحرك كي لا يُلغى إذا تغيّرت الشاشة
+    private val _test = MutableStateFlow("")
+    val testResult: StateFlow<String> = _test
+
+    @Volatile
+    private var testing = false
+
+    fun runPauseTest() {
+        if (testing) return
+        testing = true
+        _test.value = "جارٍ الاتصال بالريسيفر…"
+        scope.launch {
+            _test.value = try {
+                control.testPulse()
+            } catch (e: Exception) {
+                "فشل: ${e.message}"
+            }
+            testing = false
+        }
+    }
+
     /**
      * مزامنة يدوية بنقرتين: [offsetMs] = كم يتأخر التعليق عن القناة كما سمعه المستخدم (يتضمن تأخير صوتنا الحالي).
      * إن كان تأخير صوتنا الحالي يكفي نقلّله، وإلا نوقف الريسيفر (offset + 400) ثم نؤخّر صوتنا 400 ليتطابقا،
