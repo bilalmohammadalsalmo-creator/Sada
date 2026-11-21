@@ -23,9 +23,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.text.font.FontWeight
@@ -89,17 +97,33 @@ private val TABS = listOf(
     NavItem("الدعم", SadaIcon.Support),
 )
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun MainScreen() {
     var tab by rememberSaveable { mutableStateOf(0) }
+    var inContent by remember { mutableStateOf(false) }
+    val navReqs = remember { List(TABS.size) { FocusRequester() } }
+    val contentReq = remember { FocusRequester() }
+
+    // الرجوع: من داخل صفحة يعيد التركيز إلى القائمة الجانبية فقط (لا يخرج من التطبيق)
+    BackHandler(enabled = inContent) { runCatching { navReqs[tab].requestFocus() } }
+    LaunchedEffect(Unit) {
+        delay(150)
+        runCatching { navReqs[0].requestFocus() }
+    }
+
     Row(Modifier.fillMaxSize()) {
-        // القائمة الجانبية (على اليمين في الواجهة العربية)
+        // القائمة الجانبية: ضغطة واحدة = صفحة واحدة. لا تخرج منها إلا باتجاه الصفحة (يسار) أو OK.
         Column(
             Modifier
                 .fillMaxHeight()
                 .width(280.dp)
                 .background(Surf1.copy(alpha = 0.85f))
-                .padding(horizontal = 18.dp, vertical = 28.dp),
+                .padding(horizontal = 18.dp, vertical = 28.dp)
+                .focusProperties {
+                    exit = { dir -> if (dir == FocusDirection.Left) contentReq else FocusRequester.Cancel }
+                }
+                .focusGroup(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
@@ -112,13 +136,13 @@ fun MainScreen() {
             }
             TABS.forEachIndexed { i, t ->
                 FocusBox(
-                    onClick = { tab = i },
-                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { runCatching { contentReq.requestFocus() } },
+                    modifier = Modifier.fillMaxWidth().focusRequester(navReqs[i]),
                     shape = RoundedCornerShape(18.dp),
                     color = if (i == tab) Accent.copy(alpha = 0.22f) else Color.Transparent,
                     focusedColor = Surf3,
                 ) { focused ->
-                    // تنقّل سلس: مجرد الوصول للعنصر بالريموت يفتح صفحته
+                    // مجرد الوصول للعنصر بالريموت يعرض صفحته
                     LaunchedEffect(focused) { if (focused) tab = i }
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
@@ -136,7 +160,17 @@ fun MainScreen() {
                 }
             }
         }
-        Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 40.dp, vertical = 28.dp)) {
+        // الصفحة: إذا دخلتها لا تخرج منها إلا بزر الرجوع
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .padding(horizontal = 40.dp, vertical = 28.dp)
+                .onFocusChanged { inContent = it.hasFocus }
+                .focusRequester(contentReq)
+                .focusProperties { exit = { FocusRequester.Cancel } }
+                .focusGroup()
+        ) {
             when (tab) {
                 0 -> HomeTab()
                 1 -> LibraryTab()
@@ -634,6 +668,16 @@ private fun DiagnosticsTab() {
         SadaCard(Modifier.fillMaxWidth()) {
             Text("الالتقاط: ${eng.capture}", fontSize = 18.sp)
             Text("التحكم بالريسيفر: ${eng.control}", fontSize = 18.sp)
+        }
+
+        SadaCard(Modifier.fillMaxWidth()) {
+            var adbInfo by remember { mutableStateOf("…") }
+            LaunchedEffect(Unit) {
+                adbInfo = withContext(Dispatchers.IO) { app.autoSync.control.adbInfo() }
+            }
+            Text("حالة ADB في الريسيفر", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text(adbInfo, color = Muted, fontSize = 17.sp)
         }
 
         SadaCard(Modifier.fillMaxWidth()) {
