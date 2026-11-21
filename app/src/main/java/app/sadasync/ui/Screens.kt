@@ -100,33 +100,24 @@ private val TABS = listOf(
     NavItem("الدعم", SadaIcon.Support),
 )
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun MainScreen() {
     var tab by rememberSaveable { mutableStateOf(0) }
-    var inContent by remember { mutableStateOf(false) }
     val navReqs = remember { List(TABS.size) { FocusRequester() } }
-    val contentReq = remember { FocusRequester() }
 
-    // الرجوع: من داخل صفحة يعيد التركيز إلى القائمة الجانبية فقط (لا يخرج من التطبيق)
-    BackHandler(enabled = inContent) { runCatching { navReqs[tab].requestFocus() } }
     LaunchedEffect(Unit) {
         delay(150)
         runCatching { navReqs[0].requestFocus() }
     }
 
     Row(Modifier.fillMaxSize()) {
-        // القائمة الجانبية: ضغطة واحدة = صفحة واحدة. لا تخرج منها إلا باتجاه الصفحة (يسار) أو OK.
+        // القائمة الجانبية: ضغطة واحدة لأعلى/أسفل = تبويب واحد بالضبط
         Column(
             Modifier
                 .fillMaxHeight()
                 .width(280.dp)
                 .background(Surf1.copy(alpha = 0.85f))
-                .padding(horizontal = 18.dp, vertical = 28.dp)
-                .focusProperties {
-                    exit = { dir -> if (dir == FocusDirection.Left) contentReq else FocusRequester.Cancel }
-                }
-                .focusGroup(),
+                .padding(horizontal = 18.dp, vertical = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
@@ -139,14 +130,25 @@ fun MainScreen() {
             }
             TABS.forEachIndexed { i, t ->
                 FocusBox(
-                    onClick = { runCatching { contentReq.requestFocus() } },
-                    modifier = Modifier.fillMaxWidth().focusRequester(navReqs[i]),
+                    onClick = { tab = i },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(navReqs[i])
+                        .focusProperties {
+                            up = if (i > 0) navReqs[i - 1] else FocusRequester.Cancel
+                            down = if (i < TABS.size - 1) navReqs[i + 1] else FocusRequester.Cancel
+                        },
                     shape = RoundedCornerShape(18.dp),
                     color = if (i == tab) Accent.copy(alpha = 0.22f) else Color.Transparent,
                     focusedColor = Surf3,
                 ) { focused ->
-                    // مجرد الوصول للعنصر بالريموت يعرض صفحته
-                    LaunchedEffect(focused) { if (focused) tab = i }
+                    // الصفحة تتبدّل عند الوقوف على التبويب (بعد لحظة قصيرة حتى لا تُثقل الحركة السريعة)
+                    LaunchedEffect(focused) {
+                        if (focused) {
+                            delay(120)
+                            tab = i
+                        }
+                    }
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -163,35 +165,14 @@ fun MainScreen() {
                 }
             }
         }
-        // الصفحة: إذا دخلتها لا تخرج منها إلا بزر الرجوع (أو زر «القائمة» في أعلاها)
-        val backToNav = { runCatching { navReqs[tab].requestFocus() }; Unit }
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .padding(horizontal = 40.dp, vertical = 28.dp)
-                .onPreviewKeyEvent { e ->
-                    // زر الرجوع في الريموت: نعالجه هنا مباشرة (الضغط والرفع) كي لا يغلق التطبيق
-                    if (e.key == Key.Back || e.key == Key.Escape) {
-                        if (e.type == KeyEventType.KeyDown) backToNav()
-                        true
-                    } else false
-                }
-                .onFocusChanged { inContent = it.hasFocus }
-                .focusRequester(contentReq)
-                .focusProperties { exit = { FocusRequester.Cancel } }
-                .focusGroup()
-        ) {
-            TvButton("القائمة الرئيسية", icon = SadaIcon.Home) { backToNav() }
-            Spacer(Modifier.height(14.dp))
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                when (tab) {
-                    0 -> HomeTab()
-                    1 -> LibraryTab()
-                    2 -> SettingsTab()
-                    3 -> DiagnosticsTab()
-                    else -> SupportTab()
-                }
+        // الصفحة: التنقل داخلها عادي، وللرجوع إلى القائمة اضغط السهم نحو اليمين
+        Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 40.dp, vertical = 28.dp)) {
+            when (tab) {
+                0 -> HomeTab()
+                1 -> LibraryTab()
+                2 -> SettingsTab()
+                3 -> DiagnosticsTab()
+                else -> SupportTab()
             }
         }
     }
