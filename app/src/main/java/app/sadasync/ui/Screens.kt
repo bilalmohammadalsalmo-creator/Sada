@@ -563,6 +563,34 @@ private fun SettingsTab() {
 
 // ---------------------------------------------------------------- التشخيص
 
+/** يجرّب فتح شاشات الإعدادات بالترتيب؛ بعض واجهات الريسيفرات تحذف بعضها. يعيد true عند أول نجاح. */
+private fun openFirst(ctx: Context, intents: List<Intent>): Boolean {
+    for (i in intents) {
+        try {
+            ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return true
+        } catch (_: Exception) {
+        }
+    }
+    return false
+}
+
+private fun comp(pkg: String, cls: String) = Intent().setComponent(ComponentName(pkg, cls))
+
+private fun aboutIntents() = listOf(
+    Intent(Settings.ACTION_DEVICE_INFO_SETTINGS),
+    comp("com.android.tv.settings", "com.android.tv.settings.about.AboutActivity"),
+    comp("com.android.settings", "com.android.settings.Settings\$DeviceInfoSettingsActivity"),
+    Intent(Settings.ACTION_SETTINGS),
+)
+
+private fun developerIntents() = listOf(
+    Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS),
+    comp("com.android.tv.settings", "com.android.tv.settings.system.development.DevelopmentActivity"),
+    comp("com.android.settings", "com.android.settings.Settings\$DevelopmentSettingsDashboardActivity"),
+    comp("com.android.settings", "com.android.settings.DevelopmentSettings"),
+)
+
 @Composable
 private fun DiagnosticsTab() {
     val app = App.instance
@@ -572,8 +600,7 @@ private fun DiagnosticsTab() {
     var chanLvl by remember { mutableIntStateOf(0) }
     var extLvl by remember { mutableIntStateOf(0) }
     var log by remember { mutableStateOf("") }
-    var testMsg by remember { mutableStateOf("") }
-    var testing by remember { mutableStateOf(false) }
+    val testMsg by app.autoSync.testResult.collectAsState()
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -610,6 +637,33 @@ private fun DiagnosticsTab() {
         }
 
         SadaCard(Modifier.fillMaxWidth()) {
+            val ctx = LocalContext.current
+            var devMsg by remember { mutableStateOf("") }
+            Text("تفعيل خيارات المطوّر", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "1) اضغط «فتح حول الجهاز» ثم اضغط 7 مرات متتالية على «رقم البناء / Build number / رقم الإصدار» حتى تظهر رسالة «أنت الآن مطوّر».\n" +
+                    "2) ارجع واضغط «فتح خيارات المطوّر» ثم فعّل «تصحيح USB» و«التصحيح اللاسلكي».",
+                color = Muted, fontSize = 17.sp,
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvButton("فتح حول الجهاز", icon = SadaIcon.Settings) {
+                    devMsg = if (openFirst(ctx, aboutIntents())) ""
+                    else "تعذّر فتح الإعدادات من التطبيق. افتحها من الريسيفر يدويًا"
+                }
+                TvButton("فتح خيارات المطوّر", primary = true, icon = SadaIcon.Settings) {
+                    devMsg = if (openFirst(ctx, developerIntents())) ""
+                    else "خيارات المطوّر غير مفعّلة بعد (نفّذ الخطوة 1) أو لا تدعمها واجهة الريسيفر"
+                }
+            }
+            if (devMsg.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Text(devMsg, color = Gold, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        SadaCard(Modifier.fillMaxWidth()) {
             Text("اختبار التحكم بالريسيفر", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(6.dp))
             Text(
@@ -618,20 +672,9 @@ private fun DiagnosticsTab() {
                 color = Muted, fontSize = 17.sp,
             )
             Spacer(Modifier.height(14.dp))
-            TvButton(
-                if (testing) "جارٍ الاختبار…" else "اختبار الإيقاف المؤقت",
-                primary = true, enabled = !testing, icon = SadaIcon.Play,
-            ) {
-                testing = true
-                testMsg = "جارٍ الاتصال بالريسيفر…"
-                scope.launch {
-                    testMsg = try {
-                        app.autoSync.control.testPulse()
-                    } catch (e: Exception) {
-                        "فشل: ${e.message}"
-                    }
-                    testing = false
-                }
+            // لا نعطّل الزر أثناء الاختبار: تعطيله يُفقده التركيز فيقفز إلى القائمة الجانبية وتتغير الصفحة
+            TvButton("اختبار الإيقاف المؤقت", primary = true, icon = SadaIcon.Play) {
+                app.autoSync.runPauseTest()
             }
             if (testMsg.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
