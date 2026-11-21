@@ -174,7 +174,7 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         }
     }
 
-    /** اختبار يدوي من شاشة التشخيص: يوقف 3 ثوانٍ ثم يستأنف، ويعيد وصفًا للنتيجة. */
+    /** اختبار يدوي من شاشة التشخيص: يوقف 5 ثوانٍ ثم يستأنف، ويعيد وصفًا للنتيجة. */
     suspend fun testPulse(): String {
         val s = try {
             open(authWaitMs = 40_000)
@@ -182,8 +182,8 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
             return "فشل الاتصال: ${e.message}"
         }
         s.close()
-        val r = pauseFor(3_000)
-        return if (r.ok) "أُرسل أمر الإيقاف ثم الاستئناف عبر ${status.method?.label}. هل تجمّدت الصورة 3 ثوانٍ؟"
+        val r = pauseFor(5_000)
+        return if (r.ok) "أُرسل أمر الإيقاف ثم الاستئناف عبر ${status.method?.label}. هل تجمّدت الصورة 5 ثوانٍ؟"
         else "فشل: ${r.error}"
     }
 }
