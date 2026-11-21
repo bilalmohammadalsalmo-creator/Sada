@@ -28,6 +28,9 @@ android {
         // وسائل الدعم: اتركها فارغة لإخفائها. مثال واتساب: https://wa.me/9627XXXXXXXX  تيليغرام: https://t.me/username
         buildConfigField("String", "SUPPORT_WHATSAPP", "\"https://wa.me/962782154659\"")
         buildConfigField("String", "SUPPORT_TELEGRAM", "\"https://t.me/BilalAlsalmo\"")
+        // بلاغات الدعم تصل إلى تيليغرام عبر بوت: ضع هنا توكن البوت ورقم المحادثة (انظر الشرح). اتركهما فارغين لتعطيل الإرسال.
+        buildConfigField("String", "TG_BOT_TOKEN", "\"9245294979:AAFMJu3obXbsVI38Bq810PMTGiYzny3Cgyo\"")
+        buildConfigField("String", "TG_CHAT_ID", "\"1797006796\"")
         buildConfigField("String", "SUPPORT_PHONE", "\"+962 78 215 4659\"")
     }
 
