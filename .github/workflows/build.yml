@@ -3,7 +3,11 @@ name: Build APK
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -16,15 +20,43 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # لا يوجد gradle-wrapper.jar في المشروع، لذلك نستخدم Gradle 8.9 مباشرة
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
 
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Prepare signing key
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/sada.jks"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/sada.jks" >> "$GITHUB_ENV"
+          fi
+
+      - name: Version from tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            N="${GITHUB_REF_NAME#v}"
+            echo "VER_ARGS=-PverCode=$N -PverName=1.$N" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle assembleDebug $VER_ARGS --no-daemon --stacktrace
+
+      - name: Name the APK
+        run: cp app/build/outputs/apk/debug/*.apk sada.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sada-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: sada-apk
+          path: sada.apk
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: sada.apk
