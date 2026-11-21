@@ -60,7 +60,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
@@ -160,23 +163,35 @@ fun MainScreen() {
                 }
             }
         }
-        // الصفحة: إذا دخلتها لا تخرج منها إلا بزر الرجوع
-        Box(
+        // الصفحة: إذا دخلتها لا تخرج منها إلا بزر الرجوع (أو زر «القائمة» في أعلاها)
+        val backToNav = { runCatching { navReqs[tab].requestFocus() }; Unit }
+        Column(
             Modifier
                 .weight(1f)
                 .fillMaxHeight()
                 .padding(horizontal = 40.dp, vertical = 28.dp)
+                .onPreviewKeyEvent { e ->
+                    // زر الرجوع في الريموت: نعالجه هنا مباشرة (الضغط والرفع) كي لا يغلق التطبيق
+                    if (e.key == Key.Back || e.key == Key.Escape) {
+                        if (e.type == KeyEventType.KeyDown) backToNav()
+                        true
+                    } else false
+                }
                 .onFocusChanged { inContent = it.hasFocus }
                 .focusRequester(contentReq)
                 .focusProperties { exit = { FocusRequester.Cancel } }
                 .focusGroup()
         ) {
-            when (tab) {
-                0 -> HomeTab()
-                1 -> LibraryTab()
-                2 -> SettingsTab()
-                3 -> DiagnosticsTab()
-                else -> SupportTab()
+            TvButton("القائمة الرئيسية", icon = SadaIcon.Home) { backToNav() }
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when (tab) {
+                    0 -> HomeTab()
+                    1 -> LibraryTab()
+                    2 -> SettingsTab()
+                    3 -> DiagnosticsTab()
+                    else -> SupportTab()
+                }
             }
         }
     }
