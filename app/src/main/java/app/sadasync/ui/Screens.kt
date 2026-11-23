@@ -697,6 +697,27 @@ private fun DiagnosticsTab() {
         }
 
         SadaCard(Modifier.fillMaxWidth()) {
+            val probing by app.autoSync.control.probing.collectAsState()
+            val probeRes by app.autoSync.control.probeResult.collectAsState()
+            Text("فحص الريسيفر", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "يقرأ معلومات من الريسيفر (قراءة فقط، دون تغيير أي شيء) ويرسلها تلقائيًا إلى فريق الدعم لتعرف كيف يُضبط تأخير الصورة.",
+                color = Muted, fontSize = 17.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            TvButton(if (probing) "جارٍ الفحص…" else "فحص الريسيفر وإرسال النتيجة", primary = true, icon = SadaIcon.Settings) {
+                app.autoSync.control.startProbe { text ->
+                    SupportReporter.send(app.prefs, "فحص الريسيفر\n" + text.take(3500))
+                }
+            }
+            if (probeRes.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Text(probeRes.take(1500), color = Muted, fontSize = 14.sp)
+            }
+        }
+
+        SadaCard(Modifier.fillMaxWidth()) {
             val ctx = LocalContext.current
             var devMsg by remember { mutableStateOf("") }
             Text("تفعيل خيارات المطوّر", style = MaterialTheme.typography.titleMedium)
