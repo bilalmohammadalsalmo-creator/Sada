@@ -239,6 +239,19 @@ class AutoSyncEngine(
                     pc.setDelay(have - offsetMs)
                     note("يدوي: تقليل تأخير صوتك ${offsetMs} م.ث")
                 }
+                prefs.videoDelayViaMenu && prefs.adbPortFound > 0 -> {
+                    // الصورة تتأخر عبر قائمة الريسيفر بخطوات 0.5 ث: نضيف الفرق المقاس إلى التأخير الحالي،
+                    // ويُعوَّض الفائض (بسبب التقريب لأعلى) بتأخير صوتنا.
+                    val addMs = ((offsetMs + 499) / 500) * 500
+                    val r = control.setVideoDelay(prefs.videoDelayMs + addMs)
+                    if (!r.ok) {
+                        note("تعذّر ضبط تأخير الصورة: ${r.error}")
+                    } else {
+                        val extra = addMs - offsetMs
+                        pc.setDelay((have + extra + prefs.calibMs).coerceIn(0, PlayerController.MAX_DELAY_MS))
+                        note("يدوي: تأخير الصورة صار ${r.appliedMs / 1000.0} ث (قائمة الريسيفر)")
+                    }
+                }
                 else -> {
                     val r = control.pauseFor((offsetMs + over).toLong())
                     if (!r.ok) {
@@ -249,6 +262,15 @@ class AutoSyncEngine(
                     }
                 }
             }
+            publish()
+        }
+    }
+
+    /** إعادة تأخير الصورة في الريسيفر إلى صفر. */
+    fun resetVideoDelay() {
+        scope.launch {
+            val r = control.setVideoDelay(0)
+            note(if (r.ok) "تأخير الصورة صُفّر" else "تعذّر التصفير: ${r.error}")
             publish()
         }
     }
@@ -266,6 +288,16 @@ class AutoSyncEngine(
 
     private suspend fun delayVideo(a: SyncBrain.Action.DelayVideo) {
         publish()
+        if (prefs.videoDelayViaMenu && prefs.adbPortFound > 0) {
+            val r = control.setVideoDelay(prefs.videoDelayMs + a.ms)
+            if (!r.ok) {
+                synchronized(brain) { brain.onApplyFailed(System.nanoTime(), "تعذّر ضبط تأخير الصورة: ${r.error}") }
+                return
+            }
+            synchronized(brain) { brain.onVideoShifted(System.nanoTime() + 2_000_000_000L) }
+            note("تأخير الصورة صار ${r.appliedMs / 1000.0} ث (قائمة الريسيفر)")
+            return
+        }
         val r = control.pauseFor(a.ms.toLong())
         if (!r.ok) {
             synchronized(brain) { brain.onApplyFailed(System.nanoTime(), "تعذّر التحكم بالريسيفر: ${r.error}") }
