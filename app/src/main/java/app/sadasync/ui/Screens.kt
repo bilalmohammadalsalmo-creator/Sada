@@ -712,8 +712,17 @@ private fun DiagnosticsTab() {
                 }
             }
             if (probeRes.isNotEmpty()) {
+                val sections = remember(probeRes) { probeRes.split("\n\n").filter { it.isNotBlank() } }
+                var idx by remember(probeRes) { mutableStateOf(0) }
+                val cur = idx.coerceIn(0, (sections.size - 1).coerceAtLeast(0))
                 Spacer(Modifier.height(10.dp))
-                Text(probeRes, color = Muted, fontSize = 15.sp)
+                Text(sections.getOrElse(cur) { "" }, color = TextMain, fontSize = 17.sp)
+                if (sections.size > 1) {
+                    Spacer(Modifier.height(10.dp))
+                    TvButton("القسم التالي (${cur + 1} من ${sections.size})", icon = SadaIcon.Settings) {
+                        idx = (cur + 1) % sections.size
+                    }
+                }
             }
         }
 
