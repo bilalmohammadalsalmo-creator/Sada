@@ -155,6 +155,52 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         }
     }
 
+
+    val probeResult = kotlinx.coroutines.flow.MutableStateFlow("")
+    val probing = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    /** فحص للقراءة فقط عبر ADB: معلومات الجهاز والمنافذ والإعدادات المتعلقة بتأخير الصورة والتونر. */
+    fun startProbe(onDone: suspend (String) -> Unit) {
+        if (probing.value) return
+        probing.value = true
+        probeResult.value = "جارٍ فحص الريسيفر…"
+        grantScope.launch {
+            val text = try { runProbe() } catch (e: Throwable) { "خطأ: ${e.message}" }
+            probeResult.value = text
+            try { onDone(text) } catch (_: Throwable) {}
+            probing.value = false
+        }
+    }
+
+    private fun runProbe(): String {
+        val port = prefs.adbPortFound
+        if (port <= 0) return "نفّذ «طلب وصول الريسيفر» أولًا"
+        val cmds = listOf(
+            "id",
+            "getprop ro.product.model; getprop ro.build.version.release; getprop ro.board.platform",
+            "cat /proc/net/udp | head -20",
+            "cat /proc/net/tcp | grep ' 0A ' | head -20",
+            "ls -l /dev/dvb* 2>&1 | head -12",
+            "ls /sys/class/dmx 2>&1 | head -12",
+            "settings list system | grep -i -E 'delay|sync|avsync' | head -15",
+            "settings list global | grep -i -E 'delay|sync|avsync' | head -15",
+            "settings list secure | grep -i -E 'delay|avsync' | head -15",
+            "getprop | grep -i -E 'delay|avsync|dvb|tvinput' | head -20",
+            "dumpsys audio | grep -i -E 'delay|latency' | head -15",
+            "pm list packages | grep -i -E 'tv|dvb|ghazal|sat|player|launcher|iptv' | head -30",
+            "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | head -3",
+        )
+        val sb = StringBuilder()
+        adb.connect(host = prefs.adbHost, port = port, authWaitMs = 15_000).use { c ->
+            for (cmd in cmds) {
+                sb.appendLine("\$ $cmd")
+                sb.appendLine(try { c.shell(cmd).trim().ifEmpty { "(فارغ)" } } catch (e: Exception) { "خطأ: ${e.message}" })
+                sb.appendLine()
+            }
+        }
+        return sb.toString()
+    }
+
     /** عناوين الجهاز نفسه: المحلي + عناوين الشبكة (IPv4) لأن بعض الأجهزة تفتح ADB على عنوان الشبكة فقط. */
     private fun selfHosts(): List<String> {
         val l = mutableListOf("127.0.0.1")
