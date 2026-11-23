@@ -9,6 +9,7 @@ import app.sadasync.util.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.Closeable
 import java.io.File
@@ -239,6 +240,39 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
             sb.appendLine("تمت إعادة التأخير (3 يسار) وإغلاق القائمة (رجوع)")
         }
         return sb.toString()
+    }
+
+
+    class VideoDelayResult(val ok: Boolean, val appliedMs: Int, val error: String = "")
+
+    private val vdLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * يضبط تأخير الصورة في قائمة الريسيفر الأصلية إلى [totalMs] (يُقرَّب إلى مضاعف 500 م.ث لأعلى):
+     * Audio مرتين ← الأحمر «Delay» ← يسار ×N للتصفير ← يمين بعدد الخطوات ← رجوع ×2.
+     */
+    suspend fun setVideoDelay(totalMs: Int): VideoDelayResult = vdLock.withLock {
+        withContext(Dispatchers.IO) {
+            val port = prefs.adbPortFound
+            if (port <= 0) return@withContext VideoDelayResult(false, 0, "نفّذ «طلب وصول الريسيفر» أولًا")
+            val steps = ((totalMs + 499) / 500).coerceIn(0, 40)
+            try {
+                adb.connect(host = prefs.adbHost, port = port, authWaitMs = 8_000).use { c ->
+                    fun keys(vararg k: Int) { c.shell("input keyevent " + k.joinToString(" ")) }
+                    keys(222); delay(450); keys(222); delay(1100)
+                    keys(183); delay(900)
+                    keys(*IntArray(40) { 21 }); delay(500)      // تصفير
+                    if (steps > 0) keys(*IntArray(steps) { 22 }) // خطوات 0.5 ث
+                    delay(900)
+                    keys(4); delay(400); keys(4)
+                }
+                prefs.videoDelayMs = steps * 500
+                status = Status(Method.ADB, "تحكم عبر ADB المحلي (منفذ $port)")
+                VideoDelayResult(true, steps * 500)
+            } catch (e: Exception) {
+                VideoDelayResult(false, 0, e.message ?: e.javaClass.simpleName)
+            }
+        }
     }
 
     /** عناوين الجهاز نفسه: المحلي + عناوين الشبكة (IPv4) لأن بعض الأجهزة تفتح ADB على عنوان الشبكة فقط. */
