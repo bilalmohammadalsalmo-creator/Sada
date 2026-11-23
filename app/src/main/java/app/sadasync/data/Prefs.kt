@@ -58,6 +58,14 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("control_mode", CONTROL_AUTO)
         set(v) = sp.edit().putInt("control_mode", v).apply()
 
+    /** عنوان ومنفذ ADB اللذان نجح الوصول إليهما (يُحفظان بعد «طلب وصول الريسيفر»). */
+    var adbHost: String
+        get() = sp.getString("adb_host", "127.0.0.1") ?: "127.0.0.1"
+        set(v) = sp.edit().putString("adb_host", v).apply()
+    var adbPortFound: Int
+        get() = sp.getInt("adb_port_found", 0)
+        set(v) = sp.edit().putInt("adb_port_found", v).apply()
+
     /** زر الإيقاف المؤقت والاستئناف المرسلان للريسيفر. الافتراضي: تشغيل/إيقاف (يعمل كمبدّل). */
     var pauseKey: Int
         get() = sp.getInt("pause_key", KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
