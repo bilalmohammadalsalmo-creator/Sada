@@ -66,6 +66,16 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("adb_port_found", 0)
         set(v) = sp.edit().putInt("adb_port_found", v).apply()
 
+    /** تأخير الصورة عبر قائمة الريسيفر (Audio مرتين ← الأحمر) بدل الإيقاف المؤقت. */
+    var videoDelayViaMenu: Boolean
+        get() = sp.getBoolean("vd_menu", true)
+        set(v) = sp.edit().putBoolean("vd_menu", v).apply()
+
+    /** آخر تأخير صورة طبّقه التطبيق في الريسيفر (م.ث). الخطوة 500 م.ث. */
+    var videoDelayMs: Int
+        get() = sp.getInt("vd_ms", 0)
+        set(v) = sp.edit().putInt("vd_ms", v).apply()
+
     /** زر الإيقاف المؤقت والاستئناف المرسلان للريسيفر. الافتراضي: تشغيل/إيقاف (يعمل كمبدّل). */
     var pauseKey: Int
         get() = sp.getInt("pause_key", KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
