@@ -713,7 +713,7 @@ private fun DiagnosticsTab() {
             }
             if (probeRes.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
-                Text(probeRes.take(1500), color = Muted, fontSize = 14.sp)
+                Text(probeRes, color = Muted, fontSize = 15.sp)
             }
         }
 
