@@ -160,14 +160,17 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
     val probing = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     /** فحص للقراءة فقط عبر ADB: معلومات الجهاز والمنافذ والإعدادات المتعلقة بتأخير الصورة والتونر. */
-    fun startProbe(onDone: suspend (String) -> Unit) {
+    fun startProbe(onDone: suspend (String) -> Boolean) {
         if (probing.value) return
         probing.value = true
         probeResult.value = "جارٍ فحص الريسيفر…"
         grantScope.launch {
             val text = try { runProbe() } catch (e: Throwable) { "خطأ: ${e.message}" }
             probeResult.value = text
-            try { onDone(text) } catch (_: Throwable) {}
+            val sent = try { onDone(text) } catch (_: Throwable) { false }
+            // نحفظ نسخة في ذاكرة التطبيق أيضًا
+            try { File(ctx.filesDir, "probe.txt").writeText(text) } catch (_: Throwable) {}
+            probeResult.value = (if (sent) "✔ أُرسلت النتيجة إلى الدعم\n\n" else "✘ تعذّر الإرسال (تيليجرام محجوب؟ شغّل VPN ثم أعد الفحص). النتيجة كاملة أدناه:\n\n") + text
             probing.value = false
         }
     }
