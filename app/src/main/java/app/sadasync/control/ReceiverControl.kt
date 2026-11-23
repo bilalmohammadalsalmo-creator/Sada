@@ -179,18 +179,15 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         val port = prefs.adbPortFound
         if (port <= 0) return "نفّذ «طلب وصول الريسيفر» أولًا"
         val cmds = listOf(
-            "id",
-            "getprop ro.product.model; getprop ro.build.version.release; getprop ro.board.platform",
-            "cat /proc/net/udp | head -20",
-            "cat /proc/net/tcp | grep ' 0A ' | head -20",
+            "cat /proc/net/tcp | grep ' 0A ' | cut -c1-60 | head -12",
             "ls -l /dev/dvb* 2>&1 | head -12",
             "ls /sys/class/dmx 2>&1 | head -12",
-            "settings list system | grep -i -E 'delay|sync|avsync' | head -15",
-            "settings list global | grep -i -E 'delay|sync|avsync' | head -15",
-            "settings list secure | grep -i -E 'delay|avsync' | head -15",
-            "getprop | grep -i -E 'delay|avsync|dvb|tvinput' | head -20",
-            "dumpsys audio | grep -i -E 'delay|latency' | head -15",
-            "pm list packages | grep -i -E 'tv|dvb|ghazal|sat|player|launcher|iptv' | head -30",
+            "settings list system | grep -i -E 'delay|sync|avsync' | cut -c1-90 | head -12",
+            "settings list global | grep -i -E 'delay|sync|avsync' | cut -c1-90 | head -12",
+            "settings list secure | grep -i -E 'delay|avsync' | cut -c1-90 | head -12",
+            "getprop | grep -i -E 'delay|avsync|dvb|tvinput' | cut -c1-90 | head -15",
+            "dumpsys audio | grep -i -E 'delay|latency' | cut -c1-90 | head -10",
+            "pm list packages | grep -i -E 'tv|dvb|ghazal|sat|player|launcher|iptv' | cut -c1-70 | head -25",
             "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | head -3",
         )
         val sb = StringBuilder()
