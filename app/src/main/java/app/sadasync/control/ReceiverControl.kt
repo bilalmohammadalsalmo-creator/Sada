@@ -8,10 +8,16 @@ import app.sadasync.data.Prefs
 import app.sadasync.util.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.Closeable
 import java.io.File
 import java.io.OutputStreamWriter
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.Socket
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -128,8 +134,108 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         for (k in listOf("service.adb.tcp.port", "persist.adb.tcp.port")) {
             sysProp(k).toIntOrNull()?.let { if (it > 0) l += it }
         }
+        if (prefs.adbPortFound > 0) l.add(0, prefs.adbPortFound)
         l += 5555
         return l.distinct()
+    }
+
+
+    private val grantScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    val grantResult = kotlinx.coroutines.flow.MutableStateFlow("")
+    val granting = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    /** يبدأ طلب الوصول في الخلفية (لا يتأثر بتبديل التبويبات). النتيجة في [grantResult]. */
+    fun startGrant() {
+        if (granting.value) return
+        granting.value = true
+        grantResult.value = "جارٍ البحث عن منفذ الريسيفر… إن ظهرت نافذة «السماح بالتصحيح؟» على الشاشة فاختر «السماح دائمًا» ثم «موافق» (قد يستغرق الفحص حتى دقيقة ونصف)."
+        grantScope.launch {
+            grantResult.value = try { discoverAndGrant() } catch (e: Throwable) { "خطأ: ${e.message}" }
+            granting.value = false
+        }
+    }
+
+    /** عناوين الجهاز نفسه: المحلي + عناوين الشبكة (IPv4) لأن بعض الأجهزة تفتح ADB على عنوان الشبكة فقط. */
+    private fun selfHosts(): List<String> {
+        val l = mutableListOf("127.0.0.1")
+        try {
+            for (ni in NetworkInterface.getNetworkInterfaces()) {
+                if (!ni.isUp) continue
+                for (a in ni.inetAddresses) {
+                    val h = a.hostAddress ?: continue
+                    if (!a.isLoopbackAddress && !h.contains(':')) l += h
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        return l.distinct()
+    }
+
+    /** يفحص المنافذ المفتوحة على [host] ضمن النطاقات الشائعة ثم النطاق الواسع، بتوازٍ. */
+    private fun openPorts(host: String): List<Int> {
+        val found = ConcurrentLinkedQueue<Int>()
+        val pool = Executors.newFixedThreadPool(256)
+        val ranges = listOf(5550..5600, 1024..65535)
+        val seen = HashSet<Int>()
+        for (r in ranges) for (port in r) {
+            if (!seen.add(port)) continue
+            pool.execute {
+                try {
+                    Socket().use { it.connect(InetSocketAddress(host, port), 250); found += port }
+                } catch (_: Throwable) {
+                }
+            }
+        }
+        pool.shutdown()
+        pool.awaitTermination(90, TimeUnit.SECONDS)
+        return found.toList().sorted()
+    }
+
+    /**
+     * طلب وصول الريسيفر (مثل ZHE): يكتشف منفذ ADB تلقائيًا بدون تحديد منفذ، ويعرض نافذة الموافقة على الريسيفر.
+     * يعيد تقريرًا نصيًا بالعربي للعرض.
+     */
+    suspend fun discoverAndGrant(): String = withContext(Dispatchers.IO) {
+        val sb = StringBuilder()
+        val tried = HashSet<String>()
+        // 1) المرشحون المعروفون أولًا
+        val hosts = selfHosts()
+        sb.appendLine("العناوين: ${hosts.joinToString()}")
+        val candidates = mutableListOf<Pair<String, Int>>()
+        for (p in adbPorts()) candidates += "127.0.0.1" to p
+        for (h in hosts) for (p in listOf(5555, 5554)) candidates += h to p
+        var ok: Pair<String, Int>? = null
+        suspend fun tryOne(h: String, p: Int): Boolean {
+            if (!tried.add("$h:$p")) return false
+            return try {
+                adb.connect(host = h, port = p, connectTimeoutMs = 1500, authWaitMs = 60_000).close()
+                ok = h to p
+                true
+            } catch (e: Exception) {
+                sb.appendLine("$h:$p ← ${e.message?.take(60) ?: e.javaClass.simpleName}")
+                false
+            }
+        }
+        for ((h, p) in candidates) if (tryOne(h, p)) break
+        // 2) فحص واسع إن لم ينجح
+        if (ok == null) {
+            sb.appendLine("— فحص كل المنافذ المفتوحة —")
+            for (h in hosts) {
+                val open = openPorts(h)
+                sb.appendLine("$h منافذ مفتوحة: ${if (open.isEmpty()) "لا شيء" else open.joinToString()}")
+                for (p in open) if (tryOne(h, p)) break
+                if (ok != null) break
+            }
+        }
+        val r = ok
+        if (r != null) {
+            prefs.adbHost = r.first
+            prefs.adbPortFound = r.second
+            sb.insert(0, "✔ تم الوصول: ${r.first}:${r.second}\n")
+        } else {
+            sb.insert(0, "✘ لم يُعثر على منفذ ADB يقبل الاتصال\n")
+        }
+        sb.toString()
     }
 
     /** نص تشخيصي عن حالة ADB في النظام (للعرض في شاشة التشخيص). */
@@ -155,7 +261,7 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         if (mode == Prefs.CONTROL_AUTO || mode == Prefs.CONTROL_ADB) {
             for (port in adbPorts()) {
                 try {
-                    val c = adb.connect(port = port, authWaitMs = authWaitMs)
+                    val c = adb.connect(host = if (port == prefs.adbPortFound) prefs.adbHost else "127.0.0.1", port = port, authWaitMs = authWaitMs)
                     status = Status(Method.ADB, "تحكم عبر ADB المحلي (منفذ $port)")
                     return@withContext AdbSender(c)
                 } catch (e: Exception) {
