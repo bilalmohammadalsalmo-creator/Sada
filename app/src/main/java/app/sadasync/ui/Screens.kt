@@ -100,6 +100,7 @@ private val TABS = listOf(
     NavItem("الدعم", SadaIcon.Support),
 )
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun MainScreen() {
     var tab by rememberSaveable { mutableStateOf(0) }
