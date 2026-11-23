@@ -711,6 +711,10 @@ private fun DiagnosticsTab() {
                     SupportReporter.send(app.prefs, "فحص الريسيفر\n" + text.take(3500))
                 }
             }
+            Spacer(Modifier.height(10.dp))
+            TvButton(if (probing) "جارٍ التجربة…" else "تجربة قائمة تأخير الصورة", icon = SadaIcon.Settings) {
+                app.autoSync.control.startDelayTest()
+            }
             if (probeRes.isNotEmpty()) {
                 val sections = remember(probeRes) { probeRes.split("\n\n").filter { it.isNotBlank() } }
                 var idx by remember(probeRes) { mutableStateOf(0) }
