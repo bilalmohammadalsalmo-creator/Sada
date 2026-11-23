@@ -201,6 +201,46 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         return sb.toString()
     }
 
+
+    /** تجربة: تفتح قائمة تأخير الصورة بأزرار الريموت (Audio مرتين ثم الأحمر)، تحرّك التأخير 3 خطوات ثم تعيده وتغلق. */
+    fun startDelayTest(initialDelayMs: Long = 0) {
+        if (probing.value) return
+        probing.value = true
+        probeResult.value = "جارٍ التجربة… راقب الشاشة: يجب أن تظهر قائمة الصوت ثم نافذة تأخير الصورة (حوالي 10 ثوانٍ)."
+        grantScope.launch {
+            if (initialDelayMs > 0) delay(initialDelayMs)
+            val text = try { runDelayTest() } catch (e: Throwable) { "خطأ: ${e.message}" }
+            try { File(ctx.filesDir, "delaytest.txt").writeText(text) } catch (_: Throwable) {}
+            probeResult.value = text
+            probing.value = false
+        }
+    }
+
+    private suspend fun runDelayTest(): String {
+        val port = prefs.adbPortFound
+        if (port <= 0) return "نفّذ «طلب وصول الريسيفر» أولًا"
+        val sb = StringBuilder()
+        adb.connect(host = prefs.adbHost, port = port, authWaitMs = 15_000).use { c ->
+            fun sh(cmd: String) = try { c.shell(cmd).trim().ifEmpty { "(فارغ)" } } catch (e: Exception) { "خطأ: ${e.message}" }
+            fun key(code: Int) { sh("input keyevent $code") }
+            val focusCmd = "dumpsys window | grep -E 'mCurrentFocus' | cut -c1-120 | head -2"
+            sh("logcat -c")
+            sb.appendLine("قبل الضغط\n" + sh(focusCmd) + "\n")
+            key(222); delay(500); key(222); delay(1200)
+            sb.appendLine("بعد Audio مرتين (222)\n" + sh(focusCmd) + "\n")
+            key(183); delay(1200)
+            sb.appendLine("بعد الأحمر (183)\n" + sh(focusCmd) + "\n" + sh("dumpsys activity top | grep -E '^ *ACTIVITY' | cut -c1-120 | head -3") + "\n")
+            repeat(3) { key(22); delay(500) }
+            sb.appendLine("بعد 3 ضغطات يمين\n" + sh(focusCmd) + "\n")
+            sb.appendLine("سجل النظام (delay/avsync)\n" + sh("logcat -d -t 400 | grep -i -E 'delay|avsync' | cut -c1-120 | tail -12") + "\n")
+            repeat(3) { key(21); delay(500) }
+            delay(400)
+            key(4); delay(400); key(4)
+            sb.appendLine("تمت إعادة التأخير (3 يسار) وإغلاق القائمة (رجوع)")
+        }
+        return sb.toString()
+    }
+
     /** عناوين الجهاز نفسه: المحلي + عناوين الشبكة (IPv4) لأن بعض الأجهزة تفتح ADB على عنوان الشبكة فقط. */
     private fun selfHosts(): List<String> {
         val l = mutableListOf("127.0.0.1")
