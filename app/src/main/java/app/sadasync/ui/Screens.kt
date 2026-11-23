@@ -23,8 +23,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.focusGroup
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.focus.FocusDirection
@@ -100,12 +100,10 @@ private val TABS = listOf(
     NavItem("الدعم", SadaIcon.Support),
 )
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun MainScreen() {
     var tab by rememberSaveable { mutableStateOf(0) }
     val navReqs = remember { List(TABS.size) { FocusRequester() } }
-    val focusManager = LocalFocusManager.current
 
     LaunchedEffect(Unit) {
         delay(150)
@@ -167,30 +165,8 @@ fun MainScreen() {
                 }
             }
         }
-        // الصفحة: أعلى/أسفل = خانة واحدة بالترتيب بلا قفز. السهم نحو اليمين من أقصى الصفحة = الرجوع للقائمة (بدون زر Back)
-        Box(
-            Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .focusProperties {
-                    exit = { dir ->
-                        when (dir) {
-                            FocusDirection.Right -> navReqs[tab]
-                            else -> FocusRequester.Cancel
-                        }
-                    }
-                }
-                .focusGroup()
-                .onKeyEvent { e ->
-                    if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
-                    when (e.key) {
-                        Key.DirectionDown -> { focusManager.moveFocus(FocusDirection.Next); true }
-                        Key.DirectionUp -> { focusManager.moveFocus(FocusDirection.Previous); true }
-                        else -> false
-                    }
-                }
-                .padding(horizontal = 40.dp, vertical = 28.dp)
-        ) {
+        // الصفحة: التنقل داخلها عادي، وللرجوع إلى القائمة اضغط السهم نحو اليمين
+        Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 40.dp, vertical = 28.dp)) {
             when (tab) {
                 0 -> HomeTab()
                 1 -> LibraryTab()
@@ -698,6 +674,25 @@ private fun DiagnosticsTab() {
             Text("حالة ADB في الريسيفر", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(6.dp))
             Text(adbInfo, color = Muted, fontSize = 17.sp)
+        }
+
+        SadaCard(Modifier.fillMaxWidth()) {
+            val granting by app.autoSync.control.granting.collectAsState()
+            val grantRes by app.autoSync.control.grantResult.collectAsState()
+            Text("طلب وصول الريسيفر", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "يبحث تلقائيًا عن منفذ التصحيح في الريسيفر (بدون تحديد منفذ) ويطلب موافقتك. عند ظهور نافذة على الشاشة اختر «السماح دائمًا».",
+                color = Muted, fontSize = 17.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            TvButton(if (granting) "جارٍ البحث…" else "طلب وصول الريسيفر", primary = true, icon = SadaIcon.Settings) {
+                app.autoSync.control.startGrant()
+            }
+            if (grantRes.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Text(grantRes, color = Muted, fontSize = 16.sp)
+            }
         }
 
         SadaCard(Modifier.fillMaxWidth()) {
