@@ -33,7 +33,7 @@ class PanelView(ctx: Context) : View(ctx) {
 
     companion object {
         const val WIDTH_DP = 860
-        const val HEIGHT_DP = 520
+        const val HEIGHT_DP = 545
         private const val GOLD = 0xFFFFB020.toInt()
         private const val GREEN = 0xFF5BD97B.toInt()
         private const val RED = 0xFFFF6B6B.toInt()
@@ -99,6 +99,11 @@ class PanelView(ctx: Context) : View(ctx) {
             Row(
                 "تصفير تأخير الصورة", { "اضغط" },
                 onCenter = { e.resetVideoDelay(); true },
+            ),
+            Row(
+                "فحص الريسيفر (للتشخيص)", { "اضغط" },
+                // تُغلق اللوحة ثم يُجرى الفحص والقناة ظاهرة؛ النتيجة تُقرأ لاحقًا من «التشخيص»
+                onCenter = { e.control.startProbe(2500) { false }; true },
             ),
             Row("إغلاق", { "" }, onCenter = { true }),
         )
