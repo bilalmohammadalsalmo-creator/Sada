@@ -276,6 +276,42 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         }
     }
 
+
+    /** اختبار قراءة صوت القناة من التونر: يشغّل العملية المساعدة بصلاحية shell ويعرض تقريرها. */
+    fun startDvbTest(initialDelayMs: Long = 0) {
+        if (probing.value) return
+        probing.value = true
+        probeResult.value = "جارٍ اختبار التونر… دع القناة تعمل (حوالي 15 ثانية)."
+        grantScope.launch {
+            if (initialDelayMs > 0) delay(initialDelayMs)
+            val text = try { runDvbTest() } catch (e: Throwable) { "خطأ: ${e.message}" }
+            try { File(ctx.filesDir, "dvbtest.txt").writeText(text) } catch (_: Throwable) {}
+            probeResult.value = text
+            probing.value = false
+        }
+    }
+
+    private fun runDvbTest(): String {
+        val port = prefs.adbPortFound
+        if (port <= 0) return "نفّذ «طلب وصول الريسيفر» أولًا"
+        val ai = ctx.applicationInfo
+        val is64 = (ai.primaryCpuAbi ?: "").contains("64")
+        val proc = if (is64) "app_process64" else "app_process32"
+        val lib = ai.nativeLibraryDir + "/libsada_dvb.so"
+        val sb = StringBuilder()
+        adb.connect(host = prefs.adbHost, port = port, authWaitMs = 15_000).use { c ->
+            c.setTimeout(40_000)
+            val lvl = c.shell("cat /sys/class/dmx/dump_av_level 2>&1")
+            val pid = Regex("audio info\\s*pid:0x([0-9a-fA-F]+)").find(lvl)?.groupValues?.get(1)?.toIntOrNull(16) ?: -1
+            sb.appendLine("ABI: ${ai.primaryCpuAbi} · مكتبة: " + c.shell("ls -l $lib 2>&1").trim().take(80))
+            sb.appendLine("PID الصوت من dump_av_level: " + (if (pid > 0) "0x" + Integer.toHexString(pid) else "غير معروف"))
+            sb.appendLine()
+            val out = c.shell("CLASSPATH=${ai.sourceDir} $proc /system/bin app.sadasync.dvb.DvbHelperMain probe $lib $pid 2>&1")
+            sb.appendLine(out.trim())
+        }
+        return sb.toString().replace(Regex("\n(--- )"), "\n\n$1")
+    }
+
     /** عناوين الجهاز نفسه: المحلي + عناوين الشبكة (IPv4) لأن بعض الأجهزة تفتح ADB على عنوان الشبكة فقط. */
     private fun selfHosts(): List<String> {
         val l = mutableListOf("127.0.0.1")

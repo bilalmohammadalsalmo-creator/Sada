@@ -101,9 +101,9 @@ class PanelView(ctx: Context) : View(ctx) {
                 onCenter = { e.resetVideoDelay(); true },
             ),
             Row(
-                "فحص الريسيفر (للتشخيص)", { "اضغط" },
-                // تُغلق اللوحة ثم يُجرى الفحص والقناة ظاهرة؛ النتيجة تُقرأ لاحقًا من «التشخيص»
-                onCenter = { e.control.startProbe(2500) { false }; true },
+                "اختبار التقاط DVB", { "اضغط" },
+                // تُغلق اللوحة ثم يعمل الاختبار والقناة ظاهرة؛ النتيجة في «التشخيص»
+                onCenter = { e.control.startDvbTest(2500); true },
             ),
             Row("إغلاق", { "" }, onCenter = { true }),
         )

@@ -15,6 +15,7 @@ android {
         // يمكن تجاوزهما من سطر الأوامر (يفعل ذلك سير العمل على GitHub عند نشر إصدار): -PverCode=2 -PverName=1.2
         versionCode = (project.findProperty("verCode") as String?)?.toIntOrNull() ?: 1
         versionName = (project.findProperty("verName") as String?) ?: "0.1.0"
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
 
         // غيّر هذين السطرين إلى عنوان خادمك واسم بوت الدعم عندك
         buildConfigField("String", "API_BASE", "\"https://example.com/api\"")
@@ -59,6 +60,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    // مكتبة أصلية صغيرة لقراءة TS من التونر (تُستخدم في العملية المساعدة)
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
+    // نريد استخراج المكتبة إلى مجلد التطبيق لتحمّلها العملية المساعدة (shell)
+    packaging { jniLibs { useLegacyPackaging = true } }
     buildFeatures {
         compose = true
         buildConfig = true
