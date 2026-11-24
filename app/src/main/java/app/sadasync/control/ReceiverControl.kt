@@ -265,7 +265,8 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
                     keys(*IntArray(125) { 21 }); delay(500)     // تصفير (حتى 60 ث)
                     if (steps > 0) keys(*IntArray(steps) { 22 }) // خطوات 0.5 ث
                     delay(900 + steps * 15L)
-                    keys(4); delay(400); keys(4)
+                    keys(23); delay(900)   // موافق: تثبيت الفارق قبل الخروج
+                    keys(4)                // خروج من القائمة إن بقيت مفتوحة
                 }
                 prefs.videoDelayMs = steps * 500
                 status = Status(Method.ADB, "تحكم عبر ADB المحلي (منفذ $port)")
