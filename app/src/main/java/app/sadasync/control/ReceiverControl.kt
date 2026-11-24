@@ -295,7 +295,7 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         val port = prefs.adbPortFound
         if (port <= 0) return "نفّذ «طلب وصول الريسيفر» أولًا"
         val ai = ctx.applicationInfo
-        val is64 = (ai.primaryCpuAbi ?: "").contains("64")
+        val is64 = android.os.Process.is64Bit()
         val proc = if (is64) "app_process64" else "app_process32"
         val lib = ai.nativeLibraryDir + "/libsada_dvb.so"
         val sb = StringBuilder()
@@ -303,7 +303,7 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
             c.setTimeout(40_000)
             val lvl = c.shell("cat /sys/class/dmx/dump_av_level 2>&1")
             val pid = Regex("audio info\\s*pid:0x([0-9a-fA-F]+)").find(lvl)?.groupValues?.get(1)?.toIntOrNull(16) ?: -1
-            sb.appendLine("ABI: ${ai.primaryCpuAbi} · مكتبة: " + c.shell("ls -l $lib 2>&1").trim().take(80))
+            sb.appendLine("ABI: " + (if (is64) "64-bit" else "32-bit") + " · مكتبة: " + c.shell("ls -l $lib 2>&1").trim().take(80))
             sb.appendLine("PID الصوت من dump_av_level: " + (if (pid > 0) "0x" + Integer.toHexString(pid) else "غير معروف"))
             sb.appendLine()
             val out = c.shell("CLASSPATH=${ai.sourceDir} $proc /system/bin app.sadasync.dvb.DvbHelperMain probe $lib $pid 2>&1")
