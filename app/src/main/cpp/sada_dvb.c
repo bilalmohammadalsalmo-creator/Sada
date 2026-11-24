@@ -10,7 +10,7 @@
 #include <linux/dvb/dmx.h>
 
 // رموز الخطأ: -(1000+errno) فشل open ، -(2000+errno) فشل ioctl ، -(3000+errno) فشل poll/read
-JNIEXPORT jint JNICALL Java_app_sadasync_dvb_DvbNative_openFilter(JNIEnv *env, jclass cls, jstring jpath, jint pid) {
+JNIEXPORT jint JNICALL Java_app_sadasync_dvb_DvbNative_openFilter(JNIEnv *env, jclass cls, jstring jpath, jint pid, jint output) {
     const char *path = (*env)->GetStringUTFChars(env, jpath, 0);
     int fd = open(path, O_RDWR);
     int e = errno;
@@ -21,7 +21,8 @@ JNIEXPORT jint JNICALL Java_app_sadasync_dvb_DvbNative_openFilter(JNIEnv *env, j
     memset(&p, 0, sizeof(p));
     p.pid = (__u16)pid;                 // 0x2000 = كل الحزم
     p.input = DMX_IN_FRONTEND;
-    p.output = DMX_OUT_TSDEMUX_TAP;     // تخرج حزم TS على جهاز dvr المقابل
+    // output=2: TS_TAP (تُقرأ من dvr) ، غير ذلك: TSDEMUX_TAP (تُقرأ من مقبض المرشّح نفسه)
+    p.output = (output == 2) ? DMX_OUT_TS_TAP : DMX_OUT_TSDEMUX_TAP;
     p.pes_type = DMX_PES_OTHER;
     p.flags = DMX_IMMEDIATE_START;
     if (ioctl(fd, DMX_SET_PES_FILTER, &p) < 0) {

@@ -281,7 +281,7 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
     fun startDvbTest(initialDelayMs: Long = 0) {
         if (probing.value) return
         probing.value = true
-        probeResult.value = "جارٍ اختبار التونر… دع القناة تعمل (حوالي 15 ثانية)."
+        probeResult.value = "جارٍ اختبار التونر… دع القناة تعمل (حوالي 20 ثانية)."
         grantScope.launch {
             if (initialDelayMs > 0) delay(initialDelayMs)
             val text = try { runDvbTest() } catch (e: Throwable) { "خطأ: ${e.message}" }
@@ -302,7 +302,7 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         adb.connect(host = prefs.adbHost, port = port, authWaitMs = 15_000).use { c ->
             c.setTimeout(40_000)
             val lvl = c.shell("cat /sys/class/dmx/dump_av_level 2>&1")
-            val pid = Regex("audio info\\s*pid:0x([0-9a-fA-F]+)").find(lvl)?.groupValues?.get(1)?.toIntOrNull(16) ?: -1
+            val pid = Regex("audio info:?\\s*pid:0x([0-9a-fA-F]+)").find(lvl)?.groupValues?.get(1)?.toIntOrNull(16) ?: -1
             sb.appendLine("ABI: " + (if (is64) "64-bit" else "32-bit") + " · مكتبة: " + c.shell("ls -l $lib 2>&1").trim().take(80))
             sb.appendLine("PID الصوت من dump_av_level: " + (if (pid > 0) "0x" + Integer.toHexString(pid) else "غير معروف"))
             sb.appendLine()

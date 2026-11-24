@@ -16,22 +16,27 @@ object DvbHelperMain {
             System.load(lib)
             val pid = args.getOrNull(2)?.toIntOrNull() ?: -1
             println("uid=" + android.os.Process.myUid() + " abi-lib=" + lib.substringAfterLast('/'))
-            // نجرّب كل الحزم (0x2000) أولًا، ثم PID الصوت وحده إن عُرف
-            probe(0x2000, "كل الحزم")
-            if (pid in 1..0x1FFE) probe(pid, "PID الصوت 0x" + Integer.toHexString(pid))
+            // مصفوفة تجارب: (كل الحزم / PID الصوت) × (قراءة من المرشّح / قراءة من dvr)
+            probe(0x2000, 3, true, "كل الحزم · قراءة من المرشّح")
+            probe(0x2000, 2, false, "كل الحزم · قراءة من dvr")
+            if (pid in 1..0x1FFE) {
+                val h = "0x" + Integer.toHexString(pid)
+                probe(pid, 3, true, "PID الصوت $h · قراءة من المرشّح")
+                probe(pid, 2, false, "PID الصوت $h · قراءة من dvr")
+            }
         } catch (t: Throwable) {
             println("خطأ في المساعد: $t")
         }
     }
 
-    private fun probe(pid: Int, label: String) {
+    private fun probe(pid: Int, output: Int, fromFilter: Boolean, label: String) {
         println("--- $label ---")
-        val ffd = DvbNative.openFilter(DEMUX, pid)
+        val ffd = DvbNative.openFilter(DEMUX, pid, output)
         if (ffd < 0) {
             println("openFilter فشل: $ffd  (-1000-errno فتح، -2000-errno ioctl)")
             return
         }
-        val dfd = DvbNative.openDvr(DVR)
+        val dfd = if (fromFilter) ffd else DvbNative.openDvr(DVR)
         if (dfd < 0) {
             println("openDvr فشل: $dfd")
             DvbNative.stopFilter(ffd); DvbNative.closeFd(ffd)
@@ -46,7 +51,7 @@ object DvbHelperMain {
         val pesStart = IntArray(8192)
         val sync = Array(8192) { "" }
         val sid = IntArray(8192)
-        val end = System.nanoTime() + 3_000_000_000L
+        val end = System.nanoTime() + 2_000_000_000L
         var carry = 0
         val work = ByteArray(buf.size + 188)
         var err = 0
@@ -96,7 +101,7 @@ object DvbHelperMain {
             carry = len - i
             if (carry > 0) System.arraycopy(work, i, work, 0, carry)
         }
-        DvbNative.stopFilter(ffd); DvbNative.closeFd(dfd); DvbNative.closeFd(ffd)
+        DvbNative.stopFilter(ffd); if (dfd != ffd) DvbNative.closeFd(dfd); DvbNative.closeFd(ffd)
         println("bytes=$total packets=$packets badSync=$badSync readErr=$err")
         // أكثر PIDs ازدحامًا
         val top = (0 until 8192).filter { cnt[it] > 0 }.sortedByDescending { cnt[it] }.take(8)
