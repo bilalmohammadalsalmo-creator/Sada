@@ -161,11 +161,12 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
     val probing = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     /** فحص للقراءة فقط عبر ADB: معلومات الجهاز والمنافذ والإعدادات المتعلقة بتأخير الصورة والتونر. */
-    fun startProbe(onDone: suspend (String) -> Boolean) {
+    fun startProbe(initialDelayMs: Long = 0, onDone: suspend (String) -> Boolean) {
         if (probing.value) return
         probing.value = true
         probeResult.value = "جارٍ فحص الريسيفر…"
         grantScope.launch {
+            if (initialDelayMs > 0) delay(initialDelayMs)
             val text = try { runProbe() } catch (e: Throwable) { "خطأ: ${e.message}" }
             probeResult.value = text
             val sent = try { onDone(text) } catch (_: Throwable) { false }
@@ -180,16 +181,15 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         val port = prefs.adbPortFound
         if (port <= 0) return "نفّذ «طلب وصول الريسيفر» أولًا"
         val cmds = listOf(
-            "cat /proc/net/tcp | grep ' 0A ' | cut -c1-60 | head -12",
-            "ls -l /dev/dvb* 2>&1 | head -12",
-            "ls /sys/class/dmx 2>&1 | head -12",
-            "settings list system | grep -i -E 'delay|sync|avsync' | cut -c1-90 | head -12",
-            "settings list global | grep -i -E 'delay|sync|avsync' | cut -c1-90 | head -12",
-            "settings list secure | grep -i -E 'delay|avsync' | cut -c1-90 | head -12",
-            "getprop | grep -i -E 'delay|avsync|dvb|tvinput' | cut -c1-90 | head -15",
-            "dumpsys audio | grep -i -E 'delay|latency' | cut -c1-90 | head -10",
-            "pm list packages | grep -i -E 'tv|dvb|ghazal|sat|player|launcher|iptv' | cut -c1-70 | head -25",
-            "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | head -3",
+            "ls /dev/dvb0.* | grep -v 'ca[0-9]' | head -30",
+            "cat /sys/class/dmx/dump_av_level 2>&1 | cut -c1-100 | head -20",
+            "cat /sys/class/dmx/dmx_source 2>&1 | cut -c1-100 | head -8",
+            "cat /sys/class/dmx/cache_status 2>&1 | cut -c1-100 | head -8",
+            "dumpsys media.audio_flinger | grep -i -E 'patch|tuner|dtv|hw_av|source' | cut -c1-110 | head -20",
+            "dumpsys audio | grep -i -E 'tuner|dtv|patch|submix' | cut -c1-110 | head -12",
+            "dumpsys media.audio_flinger | grep -E 'Output thread|Standby|Sample rate|Format' | cut -c1-100 | head -16",
+            "ps -A | grep -i -E 'dvb|tuner|tvserver|tosmart|audio' | cut -c1-100 | head -15",
+            "dumpsys window | grep -E 'mCurrentFocus' | cut -c1-120 | head -2",
         )
         val sb = StringBuilder()
         adb.connect(host = prefs.adbHost, port = port, authWaitMs = 15_000).use { c ->
@@ -255,15 +255,16 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         withContext(Dispatchers.IO) {
             val port = prefs.adbPortFound
             if (port <= 0) return@withContext VideoDelayResult(false, 0, "نفّذ «طلب وصول الريسيفر» أولًا")
-            val steps = ((totalMs + 499) / 500).coerceIn(0, 40)
+            val steps = ((totalMs + 499) / 500).coerceIn(0, 120) // حتى 60 ث
             try {
                 adb.connect(host = prefs.adbHost, port = port, authWaitMs = 8_000).use { c ->
+                    c.setTimeout(30_000) // أوامر طويلة: حتى 120 ضغطة
                     fun keys(vararg k: Int) { c.shell("input keyevent " + k.joinToString(" ")) }
                     keys(222); delay(450); keys(222); delay(1100)
                     keys(183); delay(900)
-                    keys(*IntArray(40) { 21 }); delay(500)      // تصفير
+                    keys(*IntArray(125) { 21 }); delay(500)     // تصفير (حتى 60 ث)
                     if (steps > 0) keys(*IntArray(steps) { 22 }) // خطوات 0.5 ث
-                    delay(900)
+                    delay(900 + steps * 15L)
                     keys(4); delay(400); keys(4)
                 }
                 prefs.videoDelayMs = steps * 500
