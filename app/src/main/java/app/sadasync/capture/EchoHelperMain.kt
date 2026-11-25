@@ -83,7 +83,9 @@ object EchoHelperMain {
             .build()
         val b = AudioRecord.Builder()
         b.javaClass.getMethod("setContext", Context::class.java).invoke(b, ctx)
-        b.setAudioAttributes(attrs).setAudioFormat(fmt).setBufferSizeInBytes(rate * 4)
+        b.javaClass.getMethod("setAudioAttributes", AudioAttributes::class.java).invoke(b, attrs)
+        b.setAudioFormat(fmt)
+        b.setBufferSizeInBytes(rate * 4)
         return b.build()
     }
 
