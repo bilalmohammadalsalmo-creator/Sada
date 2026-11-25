@@ -143,6 +143,47 @@ object EchoHelperMain {
         }
     }
 
+    /** يرسل PCM (16 بت، ستيريو أو مونو) إلى التطبيق عبر مقبس محلي: ترويسة int rate, int ch ثم البيانات. */
+    private fun stream(port: Int, seconds: Int, ctx: Context) {
+        var rec: AudioRecord? = null
+        var chCount = 2
+        try {
+            val rate = 48000
+            rec = try {
+                build(1997, rate, AudioFormat.CHANNEL_IN_STEREO, ctx)
+            } catch (e: Throwable) {
+                chCount = 1
+                build(1997, rate, AudioFormat.CHANNEL_IN_MONO, ctx)
+            }
+            if (rec.state != AudioRecord.STATE_INITIALIZED) { println("غير مهيّأ"); return }
+            val sock = java.net.Socket("127.0.0.1", port)
+            val out = java.io.DataOutputStream(sock.getOutputStream().buffered(65536))
+            out.writeInt(rate); out.writeInt(chCount)
+            rec.startRecording()
+            val chunk = rate / 20 * chCount // 50 مللي ث
+            val sb = ShortArray(chunk)
+            val bb = ByteArray(chunk * 2)
+            val end = System.nanoTime() + seconds * 1_000_000_000L
+            while (System.nanoTime() < end) {
+                val n = rec.read(sb, 0, chunk)
+                if (n <= 0) { if (n < 0) break else continue }
+                for (i in 0 until n) {
+                    bb[i * 2] = (sb[i].toInt() and 0xff).toByte()
+                    bb[i * 2 + 1] = (sb[i].toInt() shr 8).toByte()
+                }
+                out.write(bb, 0, n * 2)
+            }
+            out.flush()
+            rec.stop()
+            sock.close()
+            println("تم: أُرسل $seconds ث")
+        } catch (e: Throwable) {
+            println("فشل البث: " + root(e))
+        } finally {
+            try { rec?.release() } catch (_: Throwable) {}
+        }
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         try { Looper.prepareMainLooper() } catch (_: Throwable) {}
@@ -151,6 +192,10 @@ object EchoHelperMain {
             makeContext()
         } catch (e: Throwable) {
             println("تعذّر إنشاء السياق: " + root(e))
+            System.out.flush(); System.exit(0); return
+        }
+        if (args.isNotEmpty() && args[0] == "stream") {
+            stream(args[1].toInt(), args.getOrNull(2)?.toIntOrNull() ?: 10, ctx)
             System.out.flush(); System.exit(0); return
         }
         val secs = 3

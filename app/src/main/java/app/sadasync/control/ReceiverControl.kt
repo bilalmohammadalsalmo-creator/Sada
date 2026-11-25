@@ -305,6 +305,96 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         return sb.toString().replace(Regex("\n(--- )"), "\n\n$1")
     }
 
+    /** يلتقط صوت القناة (Echo) بضع ثوانٍ، يعرض مستواه، ثم يشغّله مكبّرًا لتسمع ما التقطه. */
+    fun startEchoListen(initialDelayMs: Long = 0, seconds: Int = 10) {
+        if (probing.value) return
+        probing.value = true
+        probeResult.value = "جارٍ التقاط صوت القناة $seconds ثوانٍ… اترك القناة تعمل ولا تشغّل التعليق."
+        grantScope.launch {
+            if (initialDelayMs > 0) delay(initialDelayMs)
+            val text = try { runEchoListen(seconds) } catch (e: Throwable) { "خطأ: ${e.javaClass.simpleName} ${e.message}" }
+            try { File(ctx.filesDir, "echolisten.txt").writeText(text) } catch (_: Throwable) {}
+            probeResult.value = text
+            probing.value = false
+        }
+    }
+
+    private suspend fun runEchoListen(seconds: Int): String = withContext(Dispatchers.IO) {
+        val port = prefs.adbPortFound
+        if (port <= 0) return@withContext "نفّذ «طلب وصول الريسيفر» أولًا"
+        val proc = if (android.os.Process.is64Bit()) "app_process64" else "app_process32"
+        val ss = java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))
+        ss.soTimeout = 25_000
+        val helperOut = StringBuilder()
+        val t = Thread {
+            try {
+                adb.connect(host = prefs.adbHost, port = port, authWaitMs = 15_000).use { c ->
+                    c.setTimeout((seconds + 40) * 1000)
+                    helperOut.append(c.shell("CLASSPATH=${ctx.applicationInfo.sourceDir} $proc /system/bin app.sadasync.capture.EchoHelperMain stream ${ss.localPort} $seconds 2>&1"))
+                }
+            } catch (e: Throwable) { helperOut.append("adb: ${e.message}") }
+        }
+        t.start()
+        val sock = try { ss.accept() } catch (e: Throwable) {
+            ss.close(); t.join(5000)
+            return@withContext "لم يتصل المساعد بالتطبيق.\n" + helperOut.toString().trim()
+        }
+        val din = java.io.DataInputStream(sock.getInputStream().buffered(65536))
+        val rate = din.readInt(); val ch = din.readInt()
+        val bos = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(16384)
+        while (true) { val n = din.read(buf); if (n < 0) break; bos.write(buf, 0, n) }
+        sock.close(); ss.close(); t.join(8000)
+        val raw = bos.toByteArray()
+        val n = raw.size / 2
+        val pcm = ShortArray(n) { ((raw[it * 2].toInt() and 0xff) or (raw[it * 2 + 1].toInt() shl 8)).toShort() }
+        // مستوى كل 100 مللي ث
+        val blk = rate / 10 * ch
+        val dbs = ArrayList<Double>()
+        var peak = 0
+        var i = 0
+        while (i + blk <= n) {
+            var sum = 0.0
+            for (k in i until i + blk) { val v = pcm[k].toInt(); sum += v.toDouble() * v; val a = if (v < 0) -v else v; if (a > peak) peak = a }
+            val rms = Math.sqrt(sum / blk) / 32768.0
+            dbs.add(if (rms <= 1e-9) -120.0 else 20 * Math.log10(rms))
+            i += blk
+        }
+        val bars = "▁▂▃▄▅▆▇█"
+        val line = dbs.map { d -> if (d < -70) '·' else bars[(((d + 70) / 40.0) * (bars.length - 1)).toInt().coerceIn(0, bars.length - 1)] }.joinToString("")
+        val avg = if (dbs.isEmpty()) -120.0 else dbs.average()
+        val sd = if (dbs.size < 2) 0.0 else Math.sqrt(dbs.sumOf { (it - avg) * (it - avg) } / dbs.size)
+        val gain = if (peak <= 0) 1.0 else minOf(0.7 * 32767 / peak, 100.0)
+        val sb = StringBuilder()
+        sb.appendLine("rate=$rate ch=$ch عينات=${n / ch} peak=$peak")
+        sb.appendLine("avg=%.1f dBFS · تباين=%.1f dB · تكبير ×%.0f".format(avg, sd, gain))
+        sb.appendLine(line)
+        sb.appendLine(helperOut.toString().trim().takeLast(160))
+        if (peak <= 0 || n == 0) { sb.appendLine("لا صوت (صمت تام)"); return@withContext sb.toString() }
+        probeResult.value = sb.toString() + "\nجارٍ تشغيل ما التقطه الآن (مكبّرًا)… اسمع: هل هو صوت القناة؟"
+        try {
+            val out = ShortArray(n) { (pcm[it] * gain).toInt().coerceIn(-32768, 32767).toShort() }
+            val mask = if (ch == 2) android.media.AudioFormat.CHANNEL_OUT_STEREO else android.media.AudioFormat.CHANNEL_OUT_MONO
+            val minBuf = android.media.AudioTrack.getMinBufferSize(rate, mask, android.media.AudioFormat.ENCODING_PCM_16BIT)
+            val track = android.media.AudioTrack.Builder()
+                .setAudioAttributes(android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                .setAudioFormat(android.media.AudioFormat.Builder()
+                    .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(rate).setChannelMask(mask).build())
+                .setBufferSizeInBytes(maxOf(minBuf, 65536))
+                .setTransferMode(android.media.AudioTrack.MODE_STREAM)
+                .build()
+            track.play()
+            track.write(out, 0, n)
+            delay(1200)
+            track.stop(); track.release()
+            sb.appendLine("تم تشغيل المقطع.")
+        } catch (e: Throwable) { sb.appendLine("تعذّر التشغيل: ${e.message}") }
+        sb.toString()
+    }
+
     /** اختبار قراءة صوت القناة من التونر: يشغّل العملية المساعدة بصلاحية shell ويعرض تقريرها. */
     fun startDvbTest(initialDelayMs: Long = 0) {
         if (probing.value) return

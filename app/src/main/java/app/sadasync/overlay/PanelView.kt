@@ -101,9 +101,9 @@ class PanelView(ctx: Context) : View(ctx) {
                 onCenter = { e.resetVideoDelay(); true },
             ),
             Row(
-                "اختبار التقاط الصوت", { "اضغط" },
+                "تسجيل صوت القناة وسماعه", { "اضغط" },
                 // تُغلق اللوحة ثم يعمل الاختبار والقناة ظاهرة؛ النتيجة في «التشخيص»
-                onCenter = { e.control.startEchoTest(2500); true },
+                onCenter = { e.control.startEchoListen(2500, 10); true },
             ),
             Row("إغلاق", { "" }, onCenter = { true }),
         )
