@@ -184,6 +184,64 @@ object EchoHelperMain {
         }
     }
 
+    /**
+     * بث مستمر لمحرك المزامنة: ترويسة int rate, int ch ثم دفعات (long زمن القراءة، int عدد العينات، البيانات).
+     * ينتهي تلقائيًا عندما يغلق التطبيق المقبس. يبدأ بصيغة 48k مونو ثم يجرّب غيرها.
+     */
+    private fun live(port: Int, ctx: Context) {
+        val formats = listOf(
+            Triple(48000, AudioFormat.CHANNEL_IN_MONO, 1),
+            Triple(48000, AudioFormat.CHANNEL_IN_STEREO, 2),
+            Triple(44100, AudioFormat.CHANNEL_IN_STEREO, 2),
+        )
+        var rec: AudioRecord? = null
+        var rate = 0
+        var ch = 0
+        for ((r, mask, n) in formats) {
+            var cand: AudioRecord? = null
+            try {
+                cand = build(1997, r, mask, ctx)
+                if (cand.state == AudioRecord.STATE_INITIALIZED) {
+                    cand.startRecording()
+                    if (cand.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        rec = cand; rate = r; ch = n
+                        break
+                    }
+                }
+            } catch (e: Throwable) {
+                println("صيغة $r/$n: " + root(e))
+            }
+            cand?.release()
+        }
+        val active = rec ?: run { println("تعذّر فتح Echo"); return }
+        try {
+            java.net.Socket("127.0.0.1", port).use { sock ->
+                val out = java.io.DataOutputStream(sock.getOutputStream().buffered(65536))
+                out.writeInt(rate); out.writeInt(ch); out.flush()
+                val chunk = rate / 50 * ch // 20 مللي ث
+                val sb = ShortArray(chunk)
+                val bb = ByteArray(chunk * 2)
+                while (true) {
+                    val n = active.read(sb, 0, chunk)
+                    if (n < 0) break
+                    if (n == 0) { Thread.sleep(5); continue }
+                    val t = System.nanoTime()
+                    for (i in 0 until n) {
+                        bb[i * 2] = (sb[i].toInt() and 0xff).toByte()
+                        bb[i * 2 + 1] = (sb[i].toInt() shr 8).toByte()
+                    }
+                    out.writeLong(t); out.writeInt(n)
+                    out.write(bb, 0, n * 2)
+                    out.flush()
+                }
+            }
+        } catch (e: Throwable) {
+            println("انتهى البث: " + root(e))
+        } finally {
+            try { active.release() } catch (_: Throwable) {}
+        }
+    }
+
     private fun measure(rec: AudioRecord, ms: Int): Double {
         val buf = ShortArray(9600)
         var sum = 0.0
@@ -234,7 +292,7 @@ object EchoHelperMain {
             "ret=" + target.invoke(tv, arg)
         } catch (e: Throwable) { "فشل: " + root(e) }
         val rec = try { build(1997, 48000, AudioFormat.CHANNEL_IN_STEREO, ctx) } catch (e: Throwable) { println("تعذّر Echo: " + root(e)); return }
-        var restore = 0
+        var restore = 0 // الافتراضي: 0 = غير مكتوم، ولا يتغير إلا إذا أثبت القياس العكس
         try {
             rec.startRecording()
             measure(rec, 800)
@@ -244,9 +302,17 @@ object EchoHelperMain {
             println("بعد (1): %.1f dBFS · %s".format(l1, r1))
             val r0 = call(0); measure(rec, 800); val l0 = measure(rec, 2000)
             println("بعد (0): %.1f dBFS · %s".format(l0, r0))
-            restore = if (Math.abs(l1 - base) < Math.abs(l0 - base)) 1 else 0
-            val muteVal = 1 - restore
-            println("الكتم يتحقق بالقيمة $muteVal ؛ هبوط ${"%.1f".format(base - minOf(l1, l0))} dB")
+            val drop = base - minOf(l1, l0)
+            if (base < -65.0) {
+                println("القناة شبه صامتة، لا يمكن الحكم. أعد الاختبار وصوتها مسموع")
+            } else if (drop < 6.0) {
+                println("لم يتغير مستوى الالتقاط (الفرق أقل من 6 dB)")
+                println("إن سمعت صوت القناة ينقطع: الالتقاط يتم قبل الكتم. وإن لم ينقطع: هذه الدالة لا تكتم")
+            } else {
+                val muteVal = if (l1 < l0) 1 else 0
+                restore = 1 - muteVal
+                println("الكتم يتحقق بالقيمة $muteVal ؛ هبوط ${"%.1f".format(drop)} dB")
+            }
         } catch (e: Throwable) {
             println("فشل الاختبار: " + root(e))
         } finally {
@@ -267,6 +333,10 @@ object EchoHelperMain {
         }
         if (args.isNotEmpty() && args[0] == "tvtest") {
             tvTest(ctx)
+            System.out.flush(); System.exit(0); return
+        }
+        if (args.size > 1 && args[0] == "live") {
+            live(args[1].toInt(), ctx)
             System.out.flush(); System.exit(0); return
         }
         if (args.isNotEmpty() && args[0] == "stream") {

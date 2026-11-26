@@ -22,11 +22,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 data class EngineUi(
@@ -43,7 +45,8 @@ data class EngineUi(
 
 /**
  * المزامنة التلقائية المستمرة:
- *  - تلتقط صوت القناة باستمرار (AudioPlaybackCapture بعد إذن المستخدم، أو الميكروفون عند الاختيار).
+ *  - تلتقط صوت القناة باستمرار: عبر Echo إن توفّر وصول الريسيفر، وإلا AudioPlaybackCapture بعد إذن
+ *    المستخدم، أو الميكروفون عند الاختيار.
  *  - [SyncBrain] يقارنه بصوتك الخارجي كل بضع ثوانٍ ويقرر: تأخير الصورة (إيقاف مؤقت للريسيفر) أو تأخير صوتك.
  *  - عند الانقطاع أو تغيير القناة يعيد القياس والمطابقة بنفسه بدون أي تدخل.
  */
@@ -74,6 +77,13 @@ class AutoSyncEngine(
     private var captureJob: Job? = null
 
     private var actionsCount = 0
+
+    /** هل الالتقاط الجاري عبر Echo؟ */
+    @Volatile
+    private var usingEcho = false
+
+    /** آخر تأخير طُبّق على صوتنا تلقائيًا أثناء التقاط Echo (لكشف التقاط صوتنا نفسه). */
+    private var lastEchoAudioMs: Int? = null
     private var lastAction = ""
 
     val running: Boolean get() = job?.isActive == true
@@ -139,7 +149,10 @@ class AutoSyncEngine(
 
     private suspend fun run() {
         publish(captureText = "يبدأ…")
-        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        lastEchoAudioMs = null
+        if (!echoAvailable() &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        ) {
             requestPermissionScreen()
             publish(captureText = "يلزم إذن تسجيل الصوت")
         }
@@ -184,7 +197,18 @@ class AutoSyncEngine(
 
     private suspend fun execute(a: SyncBrain.Action) {
         when (a) {
-            is SyncBrain.Action.DelayAudio -> applyAudioDelta(a.ms, "تأخير صوتك ${a.ms} م.ث")
+            is SyncBrain.Action.DelayAudio -> {
+                // إن بقي الفرق نفسه بعد تأخير صوتنا، فالتقاط Echo يسمع صوتنا لا القناة: لا نكرر التأخير
+                val last = lastEchoAudioMs
+                if (usingEcho && last != null && abs(a.ms - last) <= 100) {
+                    synchronized(brain) {
+                        brain.onApplyFailed(System.nanoTime(), "الالتقاط يبدو أنه يسمع صوت التعليق نفسه؛ أرسل بلاغًا للدعم")
+                    }
+                    return
+                }
+                lastEchoAudioMs = if (usingEcho) a.ms else null
+                applyAudioDelta(a.ms, "تأخير صوتك ${a.ms} م.ث")
+            }
             is SyncBrain.Action.DelayVideo -> {
                 val have = pc.ui.value.delayMs
                 if (have >= a.rawOffsetMs) {
@@ -337,7 +361,24 @@ class AutoSyncEngine(
 
     private suspend fun captureLoop() {
         var askedOnce = false
-        while (scope.isActive && _ui.value.enabled) {
+        var echoFailures = 0
+        while (currentCoroutineContext().isActive && _ui.value.enabled) {
+            if (echoAvailable() && echoFailures < 3) {
+                var received = false
+                try {
+                    echoCapture { received = true }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    AppLog.d("echo capture error: $e")
+                    publish(captureText = "انقطع التقاط Echo: ${e.message ?: e.javaClass.simpleName}", capturing = false)
+                }
+                usingEcho = false
+                echoFailures = if (received) 0 else echoFailures + 1
+                synchronized(brain) { brain.onChannelRestart(System.nanoTime()) }
+                delay(1_500)
+                continue
+            }
             val mic = prefs.captureFromMic
             val granted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
@@ -377,6 +418,26 @@ class AutoSyncEngine(
             synchronized(brain) { brain.onChannelRestart(System.nanoTime()) }
             delay(1_000)
         }
+    }
+
+    private fun echoAvailable() = prefs.captureEcho && !prefs.captureFromMic && prefs.adbPortFound > 0
+
+    private suspend fun echoCapture(onData: () -> Unit) {
+        publish(captureText = "يفتح التقاط Echo…", capturing = false)
+        var env: EchoEnvelope? = null
+        control.streamEcho(
+            onStart = { rate, ch ->
+                usingEcho = true
+                env = EchoEnvelope(rate, ch) { t, v -> chanEnv.put(t, v) }
+                val khz = if (rate % 1000 == 0) "${rate / 1000}" else "${rate / 1000.0}"
+                publish(captureText = "يعمل (Echo ${khz}k ${if (ch == 1) "مونو" else "ستيريو"})", capturing = true)
+            },
+            onChunk = { endNs, pcm, n ->
+                if (!_ui.value.enabled) throw CancellationException("autosync stopped")
+                onData()
+                if (env?.add(endNs, pcm, n) == true) synchronized(brain) { brain.onChannelRestart(endNs) }
+            },
+        )
     }
 
     private fun startMicService() {

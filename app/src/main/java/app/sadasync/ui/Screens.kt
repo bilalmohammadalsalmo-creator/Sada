@@ -247,6 +247,7 @@ private fun HomeTab() {
     val ui by app.player.ui.collectAsState()
     val captureOn by CaptureHolder.active.collectAsState()
     val eng by app.autoSync.ui.collectAsState()
+    val echoReady = app.prefs.captureEcho && !app.prefs.captureFromMic && app.prefs.adbPortFound > 0
     var tick by remember { mutableIntStateOf(0) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
     val a11yOn = remember(tick) { isAccessibilityEnabled(ctx) }
@@ -270,9 +271,10 @@ private fun HomeTab() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 StatusTile(
                     SadaIcon.Pulse, "التقاط صوت القناة",
-                    if (captureOn) "يعمل" else "يحتاج إذنًا", captureOn, Modifier.weight(1f),
+                    if (captureOn || eng.capturing) "يعمل" else if (echoReady) "يبدأ مع المزامنة" else "يحتاج إذنًا",
+                    captureOn || eng.capturing || echoReady, Modifier.weight(1f),
                 ) {
-                    if (!captureOn) TvButton("السماح", primary = true) {
+                    if (!captureOn && !eng.capturing && !echoReady) TvButton("السماح", primary = true) {
                         ctx.startActivity(Intent(ctx, CaptureProjectionActivity::class.java))
                     }
                 }

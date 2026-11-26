@@ -8,6 +8,7 @@ import app.sadasync.data.Prefs
 import app.sadasync.util.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -277,6 +278,61 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         }
     }
 
+
+    /**
+     * التقاط مستمر لصوت القناة عبر Echo (العملية المساعدة بصلاحية shell). يبقى يعمل حتى يُلغى أو ينقطع.
+     * [onStart] تعيد الصيغة، و[onChunk] تستقبل كل دفعة مع زمن قراءتها.
+     */
+    suspend fun streamEcho(
+        onStart: (rate: Int, channels: Int) -> Unit,
+        onChunk: (endNs: Long, pcm: ShortArray, count: Int) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        val port = prefs.adbPortFound
+        check(port > 0) { "نفّذ «طلب وصول الريسيفر» أولًا" }
+        val proc = if (android.os.Process.is64Bit()) "app_process64" else "app_process32"
+        java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { server ->
+            server.soTimeout = 15_000
+            adb.connect(host = prefs.adbHost, port = port, authWaitMs = 8_000).use { c ->
+                val helperOut = StringBuffer()
+                val t = Thread {
+                    try {
+                        c.setTimeout(0) // الأمر طويل ولا يطبع شيئًا أثناء البث
+                        helperOut.append(c.shell("CLASSPATH=${ctx.applicationInfo.sourceDir} $proc /system/bin app.sadasync.capture.EchoHelperMain live ${server.localPort} 2>&1"))
+                    } catch (_: Throwable) {
+                        // يحدث عند إغلاق الاتصال لإيقاف البث
+                    }
+                }
+                t.isDaemon = true
+                t.start()
+                val sock = try {
+                    server.accept()
+                } catch (e: Exception) {
+                    throw IllegalStateException("لم يتصل مساعد الالتقاط ${helperOut.toString().trim().takeLast(120)}")
+                }
+                sock.use {
+                    it.soTimeout = 4_000
+                    val din = java.io.DataInputStream(it.getInputStream().buffered(65536))
+                    val rate = din.readInt()
+                    val ch = din.readInt()
+                    check(rate in 8_000..192_000 && ch in 1..2) { "صيغة التقاط غير متوقعة" }
+                    onStart(rate, ch)
+                    var bytes = ByteArray(0)
+                    var pcm = ShortArray(0)
+                    while (isActive) {
+                        val endNs = din.readLong()
+                        val n = din.readInt()
+                        check(n in 1..rate * ch) { "دفعة صوت تالفة" }
+                        if (pcm.size < n) { pcm = ShortArray(n); bytes = ByteArray(n * 2) }
+                        din.readFully(bytes, 0, n * 2)
+                        for (i in 0 until n) {
+                            pcm[i] = ((bytes[i * 2].toInt() and 0xff) or (bytes[i * 2 + 1].toInt() shl 8)).toShort()
+                        }
+                        onChunk(endNs, pcm, n)
+                    }
+                }
+            }
+        }
+    }
 
     /** اختبار التقاط صوت الريسيفر عبر مصدر Echo (مثل ZHE). اترك القناة تعمل بدون تشغيل التعليق. */
     fun startEchoTest(initialDelayMs: Long = 0) {

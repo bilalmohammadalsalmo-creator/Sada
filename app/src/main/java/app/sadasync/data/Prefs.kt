@@ -100,6 +100,11 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("vol_keys_app", true)
         set(v) = sp.edit().putBoolean("vol_keys_app", v).apply()
 
+    /** التقاط صوت القناة عبر Echo (يتطلب وصول الريسيفر). */
+    var captureEcho: Boolean
+        get() = sp.getBoolean("capture_echo", true)
+        set(v) = sp.edit().putBoolean("capture_echo", v).apply()
+
     /** مصدر التقاط صوت القناة: false = صوت النظام (MediaProjection)، true = الميكروفون. */
     var captureFromMic: Boolean
         get() = sp.getBoolean("capture_mic", false)
