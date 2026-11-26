@@ -184,6 +184,77 @@ object EchoHelperMain {
         }
     }
 
+    private fun measure(rec: AudioRecord, ms: Int): Double {
+        val buf = ShortArray(9600)
+        var sum = 0.0
+        var cnt = 0L
+        val end = System.nanoTime() + ms * 1_000_000L
+        while (System.nanoTime() < end) {
+            val n = rec.read(buf, 0, buf.size)
+            if (n <= 0) continue
+            for (i in 0 until n) { val v = buf[i].toInt(); sum += v.toDouble() * v }
+            cnt += n
+        }
+        val rms = if (cnt == 0L) 0.0 else sqrt(sum / cnt) / 32768.0
+        return if (rms <= 1e-9) -120.0 else 20 * log10(rms)
+    }
+
+    /**
+     * يستكشف واجهة Amlogic TvControlManager (كما يفعل ZHE) ويختبر كتم صوت القناة قبل المزج:
+     * يقيس مستوى الخرج قبل/بعد الاستدعاء بالقيمتين 1 و0، ثم يُعيد الصوت للحالة المسموعة.
+     */
+    private fun tvTest(ctx: Context) {
+        println("--- واجهة TvControlManager")
+        val paths = listOf(
+            "/system/framework/droidlogic-tv.jar", "/vendor/framework/droidlogic-tv.jar",
+            "/vendor/framework/droidlogic.tv.software.core.jar", "/system/framework/droidlogic.jar",
+        ).filter { java.io.File(it).exists() }
+        println("jars: " + paths.joinToString { it.substringAfterLast('/') })
+        val cls = try {
+            dalvik.system.PathClassLoader(paths.joinToString(":"), ClassLoader.getSystemClassLoader())
+                .loadClass("com.droidlogic.app.tv.TvControlManager")
+        } catch (e: Throwable) { println("لا يوجد الصنف: " + root(e)); return }
+        val re = Regex("(?i)mute|lag|delay|pregain|volume|avsync")
+        val ms = cls.methods.filter { re.containsMatchIn(it.name) }.sortedBy { it.name }
+        println("طرق ذات صلة (${ms.size}):")
+        for (m in ms.take(36)) {
+            println(m.name + "(" + m.parameterTypes.joinToString(",") { it.simpleName } + ")→" + m.returnType.simpleName)
+        }
+        val target = cls.methods.firstOrNull { it.name.equals("SetAmAudioPreMute", true) }
+        if (target == null) { println("لا توجد SetAmAudioPreMute"); return }
+        println("--- اختبار الكتم: " + target.name + "(" + target.parameterTypes.joinToString(",") { it.simpleName } + ")")
+        val tv: Any? = try {
+            val gi = cls.methods.firstOrNull { it.name == "getInstance" && it.parameterTypes.isEmpty() }
+            gi?.invoke(null)
+        } catch (e: Throwable) { println("getInstance فشل: " + root(e)); null }
+        if (tv == null && !java.lang.reflect.Modifier.isStatic(target.modifiers)) { println("لا نسخة من TvControlManager"); return }
+        fun call(v: Int): String = try {
+            val pt = target.parameterTypes
+            val arg: Any = if (pt.size == 1 && pt[0] == java.lang.Boolean.TYPE) (v == 1) else v
+            "ret=" + target.invoke(tv, arg)
+        } catch (e: Throwable) { "فشل: " + root(e) }
+        val rec = try { build(1997, 48000, AudioFormat.CHANNEL_IN_STEREO, ctx) } catch (e: Throwable) { println("تعذّر Echo: " + root(e)); return }
+        var restore = 0
+        try {
+            rec.startRecording()
+            measure(rec, 800)
+            val base = measure(rec, 2000)
+            println("قبل: %.1f dBFS".format(base))
+            val r1 = call(1); measure(rec, 800); val l1 = measure(rec, 2000)
+            println("بعد (1): %.1f dBFS · %s".format(l1, r1))
+            val r0 = call(0); measure(rec, 800); val l0 = measure(rec, 2000)
+            println("بعد (0): %.1f dBFS · %s".format(l0, r0))
+            restore = if (Math.abs(l1 - base) < Math.abs(l0 - base)) 1 else 0
+            val muteVal = 1 - restore
+            println("الكتم يتحقق بالقيمة $muteVal ؛ هبوط ${"%.1f".format(base - minOf(l1, l0))} dB")
+        } catch (e: Throwable) {
+            println("فشل الاختبار: " + root(e))
+        } finally {
+            println("إرجاع الصوت: " + call(restore))
+            try { rec.stop(); rec.release() } catch (_: Throwable) {}
+        }
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         try { Looper.prepareMainLooper() } catch (_: Throwable) {}
@@ -192,6 +263,10 @@ object EchoHelperMain {
             makeContext()
         } catch (e: Throwable) {
             println("تعذّر إنشاء السياق: " + root(e))
+            System.out.flush(); System.exit(0); return
+        }
+        if (args.isNotEmpty() && args[0] == "tvtest") {
+            tvTest(ctx)
             System.out.flush(); System.exit(0); return
         }
         if (args.isNotEmpty() && args[0] == "stream") {

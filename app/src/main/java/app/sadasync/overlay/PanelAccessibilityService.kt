@@ -60,6 +60,7 @@ class PanelAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        removeHud()
         hidePanel()
         super.onDestroy()
     }
@@ -72,6 +73,18 @@ class PanelAccessibilityService : AccessibilityService() {
         // نبتلع حدث الرفع (UP) المقابل لضغطة استهلكناها سابقًا
         if (event.action == KeyEvent.ACTION_UP && code == swallowUp) {
             swallowUp = -1
+            return true
+        }
+
+        if (isVolumeKey(code) && app.prefs.volKeysForApp && app.player.ui.value.playing) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                when (code) {
+                    KeyEvent.KEYCODE_VOLUME_UP -> app.player.nudgeVolume(+5)
+                    KeyEvent.KEYCODE_VOLUME_DOWN -> app.player.nudgeVolume(-5)
+                    else -> app.player.toggleMyAudio()
+                }
+                showVolume()
+            }
             return true
         }
 
@@ -119,7 +132,7 @@ class PanelAccessibilityService : AccessibilityService() {
                 KeyEvent.KEYCODE_DPAD_RIGHT -> p.adjust(1)
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER ->
                     if (p.activate()) closeByKey(code)
-                KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> closeByKey(code)
+                KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> if (!p.onBack()) closeByKey(code)
                 else -> Unit
             }
         }
@@ -129,6 +142,48 @@ class PanelAccessibilityService : AccessibilityService() {
     private fun closeByKey(code: Int) {
         swallowUp = code
         hidePanel()
+    }
+
+    private fun isVolumeKey(code: Int) =
+        code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN || code == KeyEvent.KEYCODE_VOLUME_MUTE
+
+    private var hud: VolumeHud? = null
+    private val hideHud = Runnable { removeHud() }
+
+    private fun showVolume() {
+        val ui = App.instance.player.ui.value
+        // القيمة الجديدة تصل بعد لحظة؛ نعرض المتوقعة فورًا بدل انتظار تحديث الحالة
+        handler.post {
+            val v = hud ?: VolumeHud(this).also {
+                val d = resources.displayMetrics.density
+                val lp = WindowManager.LayoutParams(
+                    (VolumeHud.W_DP * d).toInt(), (VolumeHud.H_DP * d).toInt(),
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT,
+                ).apply {
+                    gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    y = (56 * d).toInt()
+                }
+                try { wm.addView(it, lp); hud = it } catch (e: Exception) { AppLog.d("hud addView failed: $e"); return@post }
+            }
+            handler.postDelayed({
+                val u = App.instance.player.ui.value
+                v.pct = u.volumePct
+                v.muted = !u.myAudio
+            }, 60)
+            v.pct = ui.volumePct
+            v.muted = !ui.myAudio
+            handler.removeCallbacks(hideHud)
+            handler.postDelayed(hideHud, 1600)
+        }
+    }
+
+    private fun removeHud() {
+        hud?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+        hud = null
     }
 
     private fun isChannelKey(code: Int) =

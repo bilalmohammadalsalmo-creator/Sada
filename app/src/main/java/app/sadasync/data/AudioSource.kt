@@ -27,3 +27,23 @@ data class AudioSource(
         }
     }
 }
+
+/** تصنيف الصوتيات إلى مجموعات في القائمة المنسدلة، والصوتية الفارغة المدمجة. */
+object SourceGroups {
+    const val SILENCE_ID = "builtin-silence"
+    const val SILENCE_URL = "sada://silence"
+    const val OTHER = "أخرى"
+    val named = listOf("صوتيات أنيس", "فوكس", "صوتيات القرآن الكريم")
+
+    fun silence() = AudioSource(SILENCE_ID, "صوتية فارغة", SILENCE_URL, official = true)
+
+    fun of(s: AudioSource): String {
+        val n = s.name.lowercase()
+        return when {
+            n.contains("أنيس") || n.contains("انيس") || n.contains("anis") -> named[0]
+            n.contains("فوكس") || n.contains("fox") -> named[1]
+            n.contains("قرآن") || n.contains("قران") || n.contains("quran") || n.contains("koran") || n.contains("تلاوة") -> named[2]
+            else -> OTHER
+        }
+    }
+}

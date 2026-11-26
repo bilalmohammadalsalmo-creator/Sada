@@ -90,6 +90,16 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("calib_ms", 0)
         set(v) = sp.edit().putInt("calib_ms", v).apply()
 
+    /** مستوى صوت التعليق 0..100 (يتحكم به زرا الصوت + و-). */
+    var myVolumePct: Int
+        get() = sp.getInt("my_volume_pct", 100)
+        set(v) = sp.edit().putInt("my_volume_pct", v).apply()
+
+    /** زرا Vol +/- في الريموت يتحكمان بصوت التطبيق (التعليق) أثناء تشغيله. */
+    var volKeysForApp: Boolean
+        get() = sp.getBoolean("vol_keys_app", true)
+        set(v) = sp.edit().putBoolean("vol_keys_app", v).apply()
+
     /** مصدر التقاط صوت القناة: false = صوت النظام (MediaProjection)، true = الميكروفون. */
     var captureFromMic: Boolean
         get() = sp.getBoolean("capture_mic", false)

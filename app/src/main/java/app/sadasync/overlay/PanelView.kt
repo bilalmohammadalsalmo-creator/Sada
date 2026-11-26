@@ -8,6 +8,8 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.view.View
 import app.sadasync.App
+import app.sadasync.data.AudioSource
+import app.sadasync.data.SourceGroups
 import app.sadasync.sync.EngineUi
 import app.sadasync.sync.EnvelopeStore
 import app.sadasync.sync.SyncBrain
@@ -69,8 +71,8 @@ class PanelView(ctx: Context) : View(ctx) {
         rows = listOf(
             Row("تشغيل", { if (p.ui.value.playing) "يعمل" else "متوقف" }, onCenter = { p.toggle(); false }),
             Row(
-                "المصدر", { arrows(p.ui.value.source?.name ?: "—") },
-                onLeft = { p.cycleSource(-1) }, onRight = { p.cycleSource(1) },
+                "الصوتية", { p.ui.value.source?.name ?: "—" },
+                onCenter = { openDrop(); false },
             ),
             Row(
                 "المزامنة التلقائية", { if (e.ui.value.enabled) "مفعّلة" else "متوقفة" },
@@ -93,8 +95,8 @@ class PanelView(ctx: Context) : View(ctx) {
             ),
             Row("الصوت", { if (p.ui.value.myAudio) "صوتي" else "صوت القناة" }, onCenter = { p.toggleMyAudio(); false }),
             Row(
-                "تجربة تأخير الصورة", { "اضغط" },
-                onCenter = { e.control.startDelayTest(1200); true }, // تُغلق اللوحة ثم تُرسل الأزرار للقناة
+                "اختبار كتم صوت القناة", { "اضغط" },
+                onCenter = { e.control.startTvTest(2500); true }, // تُغلق اللوحة ثم يعمل الاختبار والقناة ظاهرة
             ),
             Row(
                 "تصفير تأخير الصورة", { "اضغط" },
@@ -129,11 +131,131 @@ class PanelView(ctx: Context) : View(ctx) {
     fun refresh() = invalidate()
 
     fun move(dir: Int) {
+        if (dd > 0) {
+            if (ddEntries.isNotEmpty()) ddSel = (ddSel + dir + ddEntries.size) % ddEntries.size
+            invalidate()
+            return
+        }
         sel = (sel + dir + rows.size) % rows.size
         invalidate()
     }
 
+    // ------------------------------------------------------------ القائمة المنسدلة للصوتيات
+
+    private class DdEntry(val title: String, val sub: String, val src: AudioSource?, val group: String?)
+
+    private var dd = 0 // 0 مغلقة، 1 مجموعات، 2 صوتيات مجموعة
+    private var ddSel = 0
+    private var ddScroll = 0
+    private var ddGroup: String? = null
+    private var ddEntries: List<DdEntry> = emptyList()
+
+    private fun sourcesByGroup(): Map<String, List<AudioSource>> =
+        app.sources.all.value.filter { it.id != SourceGroups.SILENCE_ID }.groupBy { SourceGroups.of(it) }
+
+    private fun openDrop() {
+        val by = sourcesByGroup()
+        val list = ArrayList<DdEntry>()
+        app.sources.all.value.firstOrNull { it.id == SourceGroups.SILENCE_ID }?.let {
+            list += DdEntry(it.name, "", it, null)
+        }
+        for (g in SourceGroups.named) list += DdEntry(g, groupCount(by[g]?.size ?: 0), null, g)
+        by[SourceGroups.OTHER]?.let { list += DdEntry(SourceGroups.OTHER, groupCount(it.size), null, SourceGroups.OTHER) }
+        ddEntries = list
+        dd = 1
+        ddGroup = null
+        val cur = app.player.ui.value.source
+        val curGroup = cur?.let { if (it.id == SourceGroups.SILENCE_ID) null else SourceGroups.of(it) }
+        ddSel = list.indexOfFirst { if (cur?.id == SourceGroups.SILENCE_ID) it.src?.id == cur.id else it.group == curGroup }.coerceAtLeast(0)
+        ddScroll = 0
+        invalidate()
+    }
+
+    private fun groupCount(n: Int) = if (n == 0) "فارغة" else "$n ◂"
+
+    private fun openGroup(g: String) {
+        val items = sourcesByGroup()[g].orEmpty()
+        ddEntries = items.map { DdEntry(it.name, "", it, null) }
+        dd = 2
+        ddGroup = g
+        val curId = app.player.ui.value.source?.id
+        ddSel = items.indexOfFirst { it.id == curId }.coerceAtLeast(0)
+        ddScroll = 0
+    }
+
+    private fun closeDrop() {
+        dd = 0
+        ddEntries = emptyList()
+        invalidate()
+    }
+
+    /** زر الرجوع: يغلق/يرجع خطوة داخل القائمة المنسدلة؛ يعيد false إن لم تكن مفتوحة (فتُغلق اللوحة). */
+    fun onBack(): Boolean {
+        when (dd) {
+            2 -> {
+                val g = ddGroup
+                openDrop()
+                ddSel = ddEntries.indexOfFirst { it.group == g }.coerceAtLeast(0)
+            }
+            1 -> closeDrop()
+            else -> return false
+        }
+        invalidate()
+        return true
+    }
+
+    private fun drawDropdown(c: Canvas, l: Float, r: Float, top: Float, h: Float) {
+        val bottom = h - dp(34f)
+        paint.style = Paint.Style.FILL
+        paint.color = 0xFF16191D.toInt()
+        rect.set(l - dp(6f), top - dp(6f), r + dp(6f), bottom)
+        c.drawRoundRect(rect, dp(16f), dp(16f), paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = dp(1.5f)
+        paint.color = GOLD
+        c.drawRoundRect(rect, dp(16f), dp(16f), paint)
+        drawText(c, if (dd == 2) (ddGroup ?: "") else "اختر الصوتية", r - dp(12f), top + dp(18f), 17f, GOLD, true, bold = true)
+        if (dd == 2) drawText(c, "◂ رجوع", l + dp(12f), top + dp(18f), 13f, GRAY, false)
+        val rh = dp(36f)
+        val gp = dp(3f)
+        val listTop = top + dp(32f)
+        val vis = ((bottom - listTop - dp(8f)) / (rh + gp)).toInt().coerceAtLeast(3)
+        if (ddEntries.isEmpty()) {
+            drawText(c, "لا توجد صوتيات هنا بعد", r - dp(14f), listTop + dp(24f), 15f, GRAY, true)
+            return
+        }
+        if (ddSel < ddScroll) ddScroll = ddSel
+        if (ddSel >= ddScroll + vis) ddScroll = ddSel - vis + 1
+        val curId = app.player.ui.value.source?.id
+        for (k in 0 until vis) {
+            val i = ddScroll + k
+            if (i >= ddEntries.size) break
+            val e = ddEntries[i]
+            val y = listTop + k * (rh + gp)
+            rect.set(l, y, r, y + rh)
+            paint.style = Paint.Style.FILL
+            if (i == ddSel) {
+                paint.color = 0x33FFFFFF
+                c.drawRoundRect(rect, dp(12f), dp(12f), paint)
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = dp(2f)
+                paint.color = Color.WHITE
+                c.drawRoundRect(rect, dp(12f), dp(12f), paint)
+            } else {
+                paint.color = 0x14FFFFFF
+                c.drawRoundRect(rect, dp(12f), dp(12f), paint)
+            }
+            val isCur = e.src != null && e.src.id == curId
+            drawText(c, fit(e.title, (r - l) - dp(70f), 16f), r - dp(14f), y + dp(24f), 16f, if (isCur) GREEN else Color.WHITE, true, bold = isCur)
+            val sub = if (isCur) "✓" else e.sub
+            if (sub.isNotEmpty()) drawText(c, sub, l + dp(14f), y + dp(24f), 14f, if (isCur) GREEN else GOLD, false)
+        }
+        if (ddScroll > 0) drawText(c, "▲", (l + r) / 2f, listTop - dp(2f), 11f, GRAY, false)
+        if (ddScroll + vis < ddEntries.size) drawText(c, "▼", (l + r) / 2f, bottom - dp(4f), 11f, GRAY, false)
+    }
+
     fun adjust(dir: Int) {
+        if (dd > 0) return
         val r = rows[sel]
         (if (dir < 0) r.onLeft else r.onRight)?.invoke()
         invalidate()
@@ -141,6 +263,19 @@ class PanelView(ctx: Context) : View(ctx) {
 
     /** يعيد true إذا طُلب إغلاق اللوحة. */
     fun activate(): Boolean {
+        if (dd > 0) {
+            val e = ddEntries.getOrNull(ddSel)
+            if (e != null) {
+                if (e.src != null) {
+                    app.player.play(e.src)
+                    closeDrop()
+                } else if (e.group != null) {
+                    openGroup(e.group)
+                }
+            }
+            invalidate()
+            return false
+        }
         val close = rows[sel].onCenter?.invoke() ?: false
         invalidate()
         return close
@@ -228,6 +363,8 @@ class PanelView(ctx: Context) : View(ctx) {
             drawText(c, v, menuLeft + dp(14f), y + dp(23f), 15f, GOLD, false)
         }
 
+        if (dd > 0) drawDropdown(c, menuLeft, menuRight, top, h)
+
         // ----- التفاصيل (اليسار)
         val detLeft = pad
         val detRight = menuLeft - gap
@@ -270,7 +407,10 @@ class PanelView(ctx: Context) : View(ctx) {
         text.color = 0x80FFFFFF.toInt()
         text.isFakeBoldText = false
         text.textAlign = Paint.Align.CENTER
-        c.drawText("◂ ▸ تغيير      OK تنفيذ      رجوع إغلاق", w / 2f, h - dp(14f), text)
+        c.drawText(
+            if (dd > 0) "▲ ▼ تنقل      OK اختيار      رجوع للخلف" else "◂ ▸ تغيير      OK تنفيذ      رجوع إغلاق",
+            w / 2f, h - dp(14f), text,
+        )
     }
 
     private fun chip(eng: EngineUi, info: SyncBrain.Info): Pair<String, Int> = when {

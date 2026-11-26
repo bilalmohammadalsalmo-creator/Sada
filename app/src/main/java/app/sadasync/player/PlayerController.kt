@@ -25,7 +25,10 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import app.sadasync.data.AudioSource
 import app.sadasync.data.Prefs
+import app.sadasync.data.SourceGroups
 import app.sadasync.data.SourceRepository
+import app.sadasync.R
+import androidx.media3.datasource.RawResourceDataSource
 import app.sadasync.sync.EnvelopeStore
 import app.sadasync.util.AppLog
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +43,7 @@ data class PlayerUi(
     val myAudio: Boolean = true,
     val status: String = "",
     val syncStatus: String = "",
+    val volumePct: Int = 100,
 )
 
 /**
@@ -68,7 +72,7 @@ class PlayerController(
     private var player: ExoPlayer? = null
 
     private val _ui = MutableStateFlow(
-        PlayerUi(source = sources.find(prefs.lastSourceId), delayMs = prefs.delayMs)
+        PlayerUi(source = sources.find(prefs.lastSourceId), delayMs = prefs.delayMs, volumePct = prefs.myVolumePct)
     )
     val ui: StateFlow<PlayerUi> = _ui
 
@@ -141,8 +145,13 @@ class PlayerController(
     fun play(src: AudioSource) = onMain {
         val p = ensurePlayer()
         AppLog.d("play ${src.name}")
-        p.setMediaItem(MediaItem.fromUri(src.url))
-        p.volume = if (_ui.value.myAudio) 1f else 0f
+        val silent = src.url == SourceGroups.SILENCE_URL
+        p.setMediaItem(
+            if (silent) MediaItem.fromUri(RawResourceDataSource.buildRawResourceUri(R.raw.silence))
+            else MediaItem.fromUri(src.url)
+        )
+        p.repeatMode = if (silent) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        p.volume = volFor(_ui.value.myAudio, _ui.value.volumePct)
         p.prepare()
         p.playWhenReady = true
         prefs.lastSourceId = src.id
@@ -205,10 +214,22 @@ class PlayerController(
         _ui.update { it.copy(delayMs = new) }
     }
 
+    /** منحنى مريح للأذن: مربّع النسبة (50% ≈ -12 dB). */
+    private fun volFor(on: Boolean, pct: Int): Float = if (on) (pct / 100f) * (pct / 100f) else 0f
+
     fun setMyAudio(on: Boolean) = onMain {
-        player?.volume = if (on) 1f else 0f
+        player?.volume = volFor(on, _ui.value.volumePct)
         _ui.update { it.copy(myAudio = on) }
     }
+
+    fun setVolumePct(pct: Int) = onMain {
+        val v = pct.coerceIn(0, 100)
+        prefs.myVolumePct = v
+        _ui.update { it.copy(volumePct = v, myAudio = v > 0 && (it.myAudio || it.volumePct != v)) }
+        player?.volume = volFor(_ui.value.myAudio, v)
+    }
+
+    fun nudgeVolume(delta: Int) = setVolumePct(_ui.value.volumePct + delta)
 
     fun toggleMyAudio() = setMyAudio(!_ui.value.myAudio)
 

@@ -292,14 +292,28 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
         }
     }
 
-    private fun runEchoTest(): String {
+    /** استكشاف واجهة Amlogic واختبار كتم صوت القناة بقياس مستوى الخرج. */
+    fun startTvTest(initialDelayMs: Long = 0) {
+        if (probing.value) return
+        probing.value = true
+        probeResult.value = "جارٍ اختبار كتم صوت القناة… دع القناة تعمل بصوت مسموع (حوالي 20 ثانية). قد ينقطع صوتها لحظات."
+        grantScope.launch {
+            if (initialDelayMs > 0) delay(initialDelayMs)
+            val text = try { runEchoTest("tvtest") } catch (e: Throwable) { "خطأ: ${e.message}" }
+            try { File(ctx.filesDir, "tvtest.txt").writeText(text) } catch (_: Throwable) {}
+            probeResult.value = text
+            probing.value = false
+        }
+    }
+
+    private fun runEchoTest(mode: String = "probe"): String {
         val port = prefs.adbPortFound
         if (port <= 0) return "نفّذ «طلب وصول الريسيفر» أولًا"
         val proc = if (android.os.Process.is64Bit()) "app_process64" else "app_process32"
         val sb = StringBuilder()
         adb.connect(host = prefs.adbHost, port = port, authWaitMs = 15_000).use { c ->
             c.setTimeout(60_000)
-            val out = c.shell("CLASSPATH=${ctx.applicationInfo.sourceDir} $proc /system/bin app.sadasync.capture.EchoHelperMain probe 2>&1")
+            val out = c.shell("CLASSPATH=${ctx.applicationInfo.sourceDir} $proc /system/bin app.sadasync.capture.EchoHelperMain $mode 2>&1")
             sb.appendLine(out.trim())
         }
         return sb.toString().replace(Regex("\n(--- )"), "\n\n$1")

@@ -26,7 +26,10 @@ class SourceRepository(private val ctx: Context, private val prefs: Prefs) {
         val official = parse(prefs.officialCacheJson)
             .ifEmpty { parse(ctx.assets.open("official_sources.json").bufferedReader().use { it.readText() }) }
             .map { it.copy(official = true) }
-        _all.value = official + parse(prefs.userSourcesJson)
+        // الصوتية الفارغة المدمجة أولًا، ونحذف رابط المثال التجريبي القديم
+        _all.value = listOf(SourceGroups.silence()) +
+            official.filter { !it.url.contains("example.com") } +
+            parse(prefs.userSourcesJson)
     }
 
     private fun parse(json: String): List<AudioSource> = try {
