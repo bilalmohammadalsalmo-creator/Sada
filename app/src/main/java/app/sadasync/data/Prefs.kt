@@ -100,10 +100,20 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("vol_keys_app", true)
         set(v) = sp.edit().putBoolean("vol_keys_app", v).apply()
 
+    /** زر يكتم/يُسمع التعليق الخارجي وحده (0 = غير محدد). */
+    var voiceMuteKey: Int
+        get() = sp.getInt("voice_mute_key", 0)
+        set(v) = sp.edit().putInt("voice_mute_key", v).apply()
+
     /** التقاط صوت القناة عبر Echo (يتطلب وصول الريسيفر). */
     var captureEcho: Boolean
         get() = sp.getBoolean("capture_echo", true)
         set(v) = sp.edit().putBoolean("capture_echo", v).apply()
+
+    /** مستوى صوت القناة قبل كتمها (-1 = ليست مكتومة من التطبيق). */
+    var savedChannelVolume: Int
+        get() = sp.getInt("saved_channel_vol", -1)
+        set(v) = sp.edit().putInt("saved_channel_vol", v).apply()
 
     /** مصدر التقاط صوت القناة: false = صوت النظام (MediaProjection)، true = الميكروفون. */
     var captureFromMic: Boolean

@@ -25,6 +25,10 @@ class VolumeHud(ctx: Context) : View(ctx) {
     var muted = false
         set(v) { field = v; invalidate() }
 
+    /** إن لم يكن null يُعرض النص بدل شريط المستوى. */
+    var label: String? = null
+        set(v) { field = v; invalidate() }
+
     private val d = resources.displayMetrics.density
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val r = RectF()
@@ -42,7 +46,8 @@ class VolumeHud(ctx: Context) : View(ctx) {
         r.set(0f, 0f, w, h)
         c.drawRoundRect(r, h / 2, h / 2, p)
 
-        val on = !muted && pct > 0
+        val text = label
+        val on = !muted && (text != null || pct > 0)
         val col = if (on) TEAL else DIM
 
         // أيقونة مكبّر الصوت
@@ -71,6 +76,16 @@ class VolumeHud(ctx: Context) : View(ctx) {
         } else {
             c.drawLine(cx + 7 * d, cy - 5 * d, cx + 15 * d, cy + 5 * d, p)
             c.drawLine(cx + 15 * d, cy - 5 * d, cx + 7 * d, cy + 5 * d, p)
+        }
+
+        if (text != null) {
+            p.style = Paint.Style.FILL
+            p.color = if (on) 0xFFFFFFFF.toInt() else DIM
+            p.textSize = 17 * d
+            p.typeface = Typeface.DEFAULT_BOLD
+            p.textAlign = Paint.Align.RIGHT
+            c.drawText(text, w - 22 * d, cy + 6 * d, p)
+            return
         }
 
         // المسار

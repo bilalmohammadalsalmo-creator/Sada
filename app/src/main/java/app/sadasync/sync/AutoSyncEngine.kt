@@ -28,7 +28,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 import kotlin.math.sqrt
 
 data class EngineUi(
@@ -59,6 +58,7 @@ class AutoSyncEngine(
         const val RATE = 16_000
         private const val TICK_MS = 500L
         private const val STEP_EVERY_TICKS = 2
+        private const val MEASURE_LIMIT_NS = 120_000_000_000L
     }
 
     val chanEnv = EnvelopeStore(180)
@@ -82,8 +82,31 @@ class AutoSyncEngine(
     @Volatile
     private var usingEcho = false
 
-    /** آخر تأخير طُبّق على صوتنا تلقائيًا أثناء التقاط Echo (لكشف التقاط صوتنا نفسه). */
-    private var lastEchoAudioMs: Int? = null
+    // ---- التقاط Echo يسمع خرج الريسيفر كله (ومنه تعليقنا)، لذلك نقيس في فترات يكون فيها التعليق صامتًا
+    private val channelMute = ChannelMute(ctx, prefs)
+
+    /** نقيس الآن: التعليق صامت والقناة مسموعة. */
+    @Volatile
+    private var measuring = false
+    private var measuringSinceNs = 0L
+
+    /** لم تنجح المطابقة خلال المهلة: نتوقف عن كتم التعليق حتى يطلب المستخدم أو يتغير شيء. */
+    @Volatile
+    private var gaveUp = false
+
+    /** المستخدم زامن يدويًا: لا نعيد القياس من تلقاء أنفسنا. */
+    @Volatile
+    private var manualDone = false
+
+    /** بين نقرتي المزامنة اليدوية يجب أن يُسمع الصوتان. */
+    @Volatile
+    private var tapUntilNs = 0L
+
+    private var channelMuted: Boolean? = null
+    private var channelMuteOk = true
+
+    /** اختيار المستخدم بزر الكتم (true = القناة مكتومة)، أو null = تلقائي. يُنسى عند إيقاف التعليق. */
+    private var channelChoice: Boolean? = null
     private var lastAction = ""
 
     val running: Boolean get() = job?.isActive == true
@@ -93,6 +116,70 @@ class AutoSyncEngine(
         pc.onDisturbed = {
             if (!running && prefs.autoSyncEnabled && pc.ui.value.playing) start() else onAudioDisturbed()
         }
+        // توجيه الصوت يعمل دائمًا (حتى لو توقفت المزامنة) كي لا تبقى القناة مكتومة بلا سبب
+        scope.launch {
+            while (isActive) {
+                updateRoute()
+                delay(250)
+            }
+        }
+    }
+
+    /** هل القناة مكتومة من التطبيق الآن؟ */
+    val channelIsMuted: Boolean get() = channelMuted == true && channelMuteOk
+
+    /**
+     * زر الكتم في الريموت: يبدّل صوت القناة فقط، ولا يمس التعليق.
+     * يعيد false إن لم يستطع الجهاز تنفيذ الكتم.
+     */
+    @Synchronized
+    fun toggleChannelMute(): Boolean {
+        channelChoice = !channelIsMuted
+        updateRoute()
+        return channelMuteOk
+    }
+
+    @Synchronized
+    private fun updateRoute() {
+        val now = System.nanoTime()
+        val playing = pc.ui.value.playing
+        val enabled = _ui.value.enabled && running
+        val locked = synchronized(brain) { brain.info.phase } == SyncBrain.Phase.LOCKED
+        val tapping = now < tapUntilNs
+        var want = playing && enabled && usingEcho && !locked && !gaveUp && !manualDone && !tapping
+        if (want && measuring && now - measuringSinceNs > MEASURE_LIMIT_NS) {
+            gaveUp = true
+            want = false
+        }
+        if (want && !measuring) {
+            measuringSinceNs = now
+            // ما سُجّل قبل الآن قد يحوي تعليقنا: نبدأ من صوت نظيف
+            synchronized(brain) { brain.onChannelRestart(now + 700_000_000L) }
+        }
+        if (want != measuring) {
+            measuring = want
+            pc.setMeasureMute(want)
+        }
+        if (!playing) channelChoice = null
+        val auto = !want && !tapping && (!enabled || manualDone || (echoAvailable() && locked))
+        val mute = playing && (channelChoice ?: auto)
+        if (mute != channelMuted) {
+            channelMuted = mute
+            channelMuteOk = channelMute.set(mute)
+            if (!channelMuteOk) note("تعذّر كتم صوت القناة على هذا الجهاز")
+        }
+    }
+
+    /** تغيّر شيء: يحق لنا القياس من جديد. */
+    private fun allowMeasuring() {
+        gaveUp = false
+        manualDone = false
+        measuringSinceNs = System.nanoTime()
+    }
+
+    /** الضغطة الأولى من المزامنة بنقرتين. */
+    fun holdForManual() {
+        tapUntilNs = System.nanoTime() + 60_000_000_000L
     }
 
     // ------------------------------------------------------------ تحكم
@@ -126,10 +213,12 @@ class AutoSyncEngine(
     fun cancel() {
         job?.cancel()
         captureJob?.cancel()
+        usingEcho = false
     }
 
     /** يبدأ القياس من الصفر (زر "مزامنة الآن"). */
     fun resync() {
+        allowMeasuring()
         synchronized(brain) { brain.reset(System.nanoTime()) }
         start()
     }
@@ -137,11 +226,13 @@ class AutoSyncEngine(
     /** يُستدعى عند تغيير القناة على الريسيفر: التأخير السابق انتهى ومحتوى القناة تغيّر. */
     fun onChannelChange() {
         if (!running) return
+        allowMeasuring()
         synchronized(brain) { brain.onChannelRestart(System.nanoTime() + 1_500_000_000L) }
     }
 
     private fun onAudioDisturbed() {
         if (!running) return
+        allowMeasuring()
         synchronized(brain) { brain.onExternalRestart(System.nanoTime()) }
     }
 
@@ -149,7 +240,7 @@ class AutoSyncEngine(
 
     private suspend fun run() {
         publish(captureText = "يبدأ…")
-        lastEchoAudioMs = null
+        allowMeasuring()
         if (!echoAvailable() &&
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -166,7 +257,8 @@ class AutoSyncEngine(
         while (scope.isActive && _ui.value.enabled) {
             delay(TICK_MS)
             tick++
-            if (tick % STEP_EVERY_TICKS == 0) {
+            // مع Echo لا نحلل إلا فترات القياس، فبقية الوقت يحوي الالتقاط تعليقنا
+            if (tick % STEP_EVERY_TICKS == 0 && (!usingEcho || measuring)) {
                 val actions = synchronized(brain) { brain.step(System.nanoTime(), chanEnv, pc.refEnvelope) }
                 for (a in actions) execute(a)
             }
@@ -175,7 +267,13 @@ class AutoSyncEngine(
     }
 
     private fun publish(captureText: String? = null, capturing: Boolean? = null) {
-        val info = synchronized(brain) { brain.info }
+        val raw = synchronized(brain) { brain.info }
+        val info = when {
+            gaveUp -> raw.copy(text = "تعذّرت المطابقة، اضغط «مزامنة الآن» للمحاولة")
+            measuring && channelIsMuted -> raw.copy(text = "القناة مكتومة، أسمعها بزر الكتم كي تتم المطابقة")
+            measuring -> raw.copy(text = raw.text + " · تعليقك صامت أثناء القياس")
+            else -> raw
+        }
         val cur = _ui.value
         _ui.value = cur.copy(
             brain = info,
@@ -197,18 +295,7 @@ class AutoSyncEngine(
 
     private suspend fun execute(a: SyncBrain.Action) {
         when (a) {
-            is SyncBrain.Action.DelayAudio -> {
-                // إن بقي الفرق نفسه بعد تأخير صوتنا، فالتقاط Echo يسمع صوتنا لا القناة: لا نكرر التأخير
-                val last = lastEchoAudioMs
-                if (usingEcho && last != null && abs(a.ms - last) <= 100) {
-                    synchronized(brain) {
-                        brain.onApplyFailed(System.nanoTime(), "الالتقاط يبدو أنه يسمع صوت التعليق نفسه؛ أرسل بلاغًا للدعم")
-                    }
-                    return
-                }
-                lastEchoAudioMs = if (usingEcho) a.ms else null
-                applyAudioDelta(a.ms, "تأخير صوتك ${a.ms} م.ث")
-            }
+            is SyncBrain.Action.DelayAudio -> applyAudioDelta(a.ms, "تأخير صوتك ${a.ms} م.ث")
             is SyncBrain.Action.DelayVideo -> {
                 val have = pc.ui.value.delayMs
                 if (have >= a.rawOffsetMs) {
@@ -253,6 +340,8 @@ class AutoSyncEngine(
      * ويبقى هامش 400 م.ث للضبط الدقيق بالزرين ±0.1.
      */
     fun manualOffset(offsetMs: Int) {
+        tapUntilNs = 0L
+        manualDone = true
         scope.launch {
             val over = 400
             val have = pc.ui.value.delayMs

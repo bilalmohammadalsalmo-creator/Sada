@@ -76,16 +76,39 @@ class PanelAccessibilityService : AccessibilityService() {
             return true
         }
 
-        if (isVolumeKey(code) && app.prefs.volKeysForApp && app.player.ui.value.playing) {
-            if (event.action == KeyEvent.ACTION_DOWN) {
-                when (code) {
-                    KeyEvent.KEYCODE_VOLUME_UP -> app.player.nudgeVolume(+5)
-                    KeyEvent.KEYCODE_VOLUME_DOWN -> app.player.nudgeVolume(-5)
-                    else -> app.player.toggleMyAudio()
+        if (app.player.ui.value.playing) {
+            // زر الكتم: صوت القناة الأساسي فقط
+            if (code == KeyEvent.KEYCODE_VOLUME_MUTE) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    val ok = app.autoSync.toggleChannelMute()
+                    val muted = app.autoSync.channelIsMuted
+                    showHud(
+                        when {
+                            !ok -> "تعذّر كتم القناة"
+                            muted -> "القناة مكتومة"
+                            else -> "القناة مسموعة"
+                        },
+                        muted,
+                    )
                 }
-                showVolume()
+                return true
             }
-            return true
+            // الزر الذي اختاره المستخدم: التعليق الخارجي فقط
+            if (app.prefs.voiceMuteKey != 0 && code == app.prefs.voiceMuteKey) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    val on = !app.player.ui.value.myAudio
+                    app.player.setMyAudio(on)
+                    showHud(if (on) "التعليق مسموع" else "التعليق مكتوم", !on)
+                }
+                return true
+            }
+            if (isVolumeKey(code) && app.prefs.volKeysForApp) {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    app.player.nudgeVolume(if (code == KeyEvent.KEYCODE_VOLUME_UP) +5 else -5)
+                    showHud(null, false)
+                }
+                return true
+            }
         }
 
         if (panel != null) return handlePanelKey(event)
@@ -145,12 +168,13 @@ class PanelAccessibilityService : AccessibilityService() {
     }
 
     private fun isVolumeKey(code: Int) =
-        code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN || code == KeyEvent.KEYCODE_VOLUME_MUTE
+        code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN
 
     private var hud: VolumeHud? = null
     private val hideHud = Runnable { removeHud() }
 
-    private fun showVolume() {
+    /** [label] نص حالة الكتم، أو null لعرض شريط مستوى التعليق. */
+    private fun showHud(label: String?, labelMuted: Boolean) {
         val ui = App.instance.player.ui.value
         // القيمة الجديدة تصل بعد لحظة؛ نعرض المتوقعة فورًا بدل انتظار تحديث الحالة
         handler.post {
@@ -169,13 +193,20 @@ class PanelAccessibilityService : AccessibilityService() {
                 }
                 try { wm.addView(it, lp); hud = it } catch (e: Exception) { AppLog.d("hud addView failed: $e"); return@post }
             }
-            handler.postDelayed({
-                val u = App.instance.player.ui.value
-                v.pct = u.volumePct
-                v.muted = !u.myAudio
-            }, 60)
-            v.pct = ui.volumePct
-            v.muted = !ui.myAudio
+            v.label = label
+            if (label != null) {
+                v.muted = labelMuted
+            } else {
+                handler.postDelayed({
+                    val u = App.instance.player.ui.value
+                    if (v.label == null) {
+                        v.pct = u.volumePct
+                        v.muted = !u.myAudio
+                    }
+                }, 60)
+                v.pct = ui.volumePct
+                v.muted = !ui.myAudio
+            }
             handler.removeCallbacks(hideHud)
             handler.postDelayed(hideHud, 1600)
         }

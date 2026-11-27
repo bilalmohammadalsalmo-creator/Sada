@@ -4,6 +4,7 @@ package app.sadasync.player
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.ContextCompat
@@ -49,6 +50,7 @@ data class PlayerUi(
 /**
  * غلاف حول ExoPlayer. كل الاستدعاءات على الخيط الرئيسي (setDelay يحوّل نفسه إليه).
  * - الصوت يُشغَّل بدون طلب Audio Focus حتى لا يوقف صوت تطبيق القنوات.
+ * - يخرج على مسار المنبّه حتى يمكن كتم القناة (مسار الوسائط) ويبقى التعليق مسموعًا.
  * - التأخير الموجب عبر DelayAudioProcessor، والسالب (تقديم) عبر seek في المصادر القابلة للتقديم.
  */
 class PlayerController(
@@ -105,7 +107,7 @@ class PlayerController(
             .build()
         p.setAudioAttributes(
             AudioAttributes.Builder()
-                .setUsage(C.USAGE_MEDIA)
+                .setUsage(C.USAGE_ALARM)
                 .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
                 .build(),
             /* handleAudioFocus = */ false,
@@ -151,7 +153,8 @@ class PlayerController(
             else MediaItem.fromUri(src.url)
         )
         p.repeatMode = if (silent) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-        p.volume = volFor(_ui.value.myAudio, _ui.value.volumePct)
+        ensureAlarmStreamAudible()
+        applyVolume()
         p.prepare()
         p.playWhenReady = true
         prefs.lastSourceId = src.id
@@ -217,16 +220,40 @@ class PlayerController(
     /** منحنى مريح للأذن: مربّع النسبة (50% ≈ -12 dB). */
     private fun volFor(on: Boolean, pct: Int): Float = if (on) (pct / 100f) * (pct / 100f) else 0f
 
+    /** كتم مؤقت للتعليق أثناء القياس (لأن التقاط Echo يسمعه). لا يغيّر اختيار المستخدم. */
+    private var measureMuted = false
+
+    private fun applyVolume() {
+        player?.volume = volFor(_ui.value.myAudio && !measureMuted, _ui.value.volumePct)
+    }
+
+    fun setMeasureMute(on: Boolean) = onMain {
+        measureMuted = on
+        applyVolume()
+    }
+
+    private fun ensureAlarmStreamAudible() {
+        try {
+            val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val want = (am.getStreamMaxVolume(AudioManager.STREAM_ALARM) * 7 + 9) / 10
+            if (am.getStreamVolume(AudioManager.STREAM_ALARM) < want) {
+                am.setStreamVolume(AudioManager.STREAM_ALARM, want, 0)
+            }
+        } catch (e: Exception) {
+            AppLog.d("alarm volume: $e")
+        }
+    }
+
     fun setMyAudio(on: Boolean) = onMain {
-        player?.volume = volFor(on, _ui.value.volumePct)
         _ui.update { it.copy(myAudio = on) }
+        applyVolume()
     }
 
     fun setVolumePct(pct: Int) = onMain {
         val v = pct.coerceIn(0, 100)
         prefs.myVolumePct = v
         _ui.update { it.copy(volumePct = v, myAudio = v > 0 && (it.myAudio || it.volumePct != v)) }
-        player?.volume = volFor(_ui.value.myAudio, v)
+        applyVolume()
     }
 
     fun nudgeVolume(delta: Int) = setVolumePct(_ui.value.volumePct + delta)

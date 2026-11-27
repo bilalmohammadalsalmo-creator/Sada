@@ -448,7 +448,7 @@ class ReceiverControl(private val ctx: Context, private val prefs: Prefs) {
             val minBuf = android.media.AudioTrack.getMinBufferSize(rate, mask, android.media.AudioFormat.ENCODING_PCM_16BIT)
             val track = android.media.AudioTrack.Builder()
                 .setAudioAttributes(android.media.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setUsage(android.media.AudioAttributes.USAGE_ALARM)
                     .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
                 .setAudioFormat(android.media.AudioFormat.Builder()
                     .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)

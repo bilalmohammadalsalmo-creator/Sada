@@ -93,7 +93,11 @@ class PanelView(ctx: Context) : View(ctx) {
                 "ضبط دقيق", { arrows(fmtDelay(p.ui.value.delayMs)) },
                 onLeft = { p.nudgeDelay(-100) }, onRight = { p.nudgeDelay(100) },
             ),
-            Row("الصوت", { if (p.ui.value.myAudio) "صوتي" else "صوت القناة" }, onCenter = { p.toggleMyAudio(); false }),
+            Row("صوت التعليق", { if (p.ui.value.myAudio) "مسموع" else "مكتوم" }, onCenter = { p.toggleMyAudio(); false }),
+            Row(
+                "صوت القناة", { if (e.channelIsMuted) "مكتوم" else "مسموع" },
+                onCenter = { e.toggleChannelMute(); false },
+            ),
             Row(
                 "اختبار كتم صوت القناة", { "اضغط" },
                 onCenter = { e.control.startTvTest(2500); true }, // تُغلق اللوحة ثم يعمل الاختبار والقناة ظاهرة
@@ -118,6 +122,7 @@ class PanelView(ctx: Context) : View(ctx) {
         if (tapStep == 0) {
             tapT1 = now
             tapStep = 1
+            e.holdForManual()
         } else {
             tapStep = 0
             e.manualOffset(((now - tapT1) / 1_000_000L).toInt())
@@ -341,7 +346,7 @@ class PanelView(ctx: Context) : View(ctx) {
         // ----- القائمة (اليمين)
         val menuRight = w - pad
         val menuLeft = menuRight - menuW
-        val rowH = dp(34f)
+        val rowH = dp(31f)
         rows.forEachIndexed { i, r ->
             val y = top + i * (rowH + dp(3f))
             rect.set(menuLeft, y, menuRight, y + rowH)
@@ -358,9 +363,9 @@ class PanelView(ctx: Context) : View(ctx) {
                 paint.color = 0x14FFFFFF
                 c.drawRoundRect(rect, dp(12f), dp(12f), paint)
             }
-            drawText(c, r.label, menuRight - dp(14f), y + dp(23f), 16f, Color.WHITE, true)
+            drawText(c, r.label, menuRight - dp(14f), y + dp(21f), 16f, Color.WHITE, true)
             val v = fit(r.value(), menuW * 0.5f, 15f)
-            drawText(c, v, menuLeft + dp(14f), y + dp(23f), 15f, GOLD, false)
+            drawText(c, v, menuLeft + dp(14f), y + dp(21f), 15f, GOLD, false)
         }
 
         if (dd > 0) drawDropdown(c, menuLeft, menuRight, top, h)

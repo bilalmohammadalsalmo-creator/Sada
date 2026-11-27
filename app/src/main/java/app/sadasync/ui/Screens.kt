@@ -190,6 +190,12 @@ private fun isAccessibilityEnabled(ctx: Context): Boolean {
     }
 }
 
+private val reservedKeys = setOf(
+    KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE,
+    KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT,
+    KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+)
+
 private fun keyName(code: Int) = KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
 
 private fun fmtDelay(ms: Int) = String.format(Locale.US, "%+.1f", ms / 1000.0)
@@ -520,7 +526,8 @@ private fun SettingsTab() {
     var pauseKey by remember { mutableIntStateOf(prefs.pauseKey) }
     var resumeKey by remember { mutableIntStateOf(prefs.resumeKey) }
     var calib by remember { mutableIntStateOf(prefs.calibMs) }
-    // 0 = لا شيء، 1 = زر فتح اللوحة، 2 = زر الإيقاف المؤقت، 3 = زر الاستئناف
+    var voiceKey by remember { mutableIntStateOf(prefs.voiceMuteKey) }
+    // 0 = لا شيء، 1 = زر فتح اللوحة، 2 = زر الإيقاف المؤقت، 3 = زر الاستئناف، 4 = زر كتم التعليق
     var learning by remember { mutableIntStateOf(0) }
 
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -575,6 +582,11 @@ private fun SettingsTab() {
 
         SectionLabel("اللوحة والريموت")
         ValueRow("زر فتح اللوحة", keyName(trigger), "ضغطتان سريعتان. اضغط ثم اختر زرًا") { learning = 1 }
+        ValueRow(
+            "زر كتم التعليق الخارجي",
+            if (voiceKey == 0) "غير محدد" else keyName(voiceKey),
+            "اضغط ثم اختر زرًا. زر الكتم العادي في الريموت يبقى لصوت القناة",
+        ) { learning = 4 }
         ValueRow("التوقيت الحالي لصوتك", "${fmtDelay(ui.delayMs)} ث", "اضغط للتصفير") { app.player.setDelay(0) }
         Spacer(Modifier.height(24.dp))
     }
@@ -585,7 +597,9 @@ private fun SettingsTab() {
                 when (learning) {
                     1 -> { prefs.triggerKey = it; trigger = it }
                     2 -> { prefs.pauseKey = it; pauseKey = it }
-                    else -> { prefs.resumeKey = it; resumeKey = it }
+                    3 -> { prefs.resumeKey = it; resumeKey = it }
+                    // أزرار الصوت والتنقل وزر فتح اللوحة محجوزة
+                    else -> if (it != prefs.triggerKey && it !in reservedKeys) { prefs.voiceMuteKey = it; voiceKey = it }
                 }
                 learning = 0
             },
